@@ -1,0 +1,9 @@
+# 项目数据/临时目录
+.workbuddy/
+test-lib/
+ui_demo/
+backups/
+*.pyc
+__pycache__/
+.part
+*.part
