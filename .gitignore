@@ -7,3 +7,11 @@ backups/
 __pycache__/
 .part
 *.part
+
+# 打包产物与别名资源（server 已将 appv2.* 映射回源文件）
+build/
+dist/
+release/
+app/web/appv2.js
+app/web/appv2.css
+*.spec.bak

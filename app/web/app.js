@@ -6,7 +6,8 @@ let STATE = {
   tables: [], curTable: null, rows: [], cols: [],
   settings: {}, dbPath: "", libRoot: "", fieldInputs: {},
   detailRow: null, editing: false, editValues: {}, dlCache: {},
-  lastDatasheet: "", pickedFile: "", lastSN: null, model3d: null,
+  lastDatasheet: "", pickedFile: "", lastSN: null, model3d: null, m3dPending: false,
+  sn: "", libgenPending: { sch: false, pcb: false },
 };
 
 /* ================= 工具 ================= */
@@ -189,6 +190,41 @@ function showDetail(row, tr) {
   STATE.detailTr = tr || null;
   STATE.editing = false;
   renderDetail();
+  loadLibCheck(STATE.detailRow);  // 库文件核对（异步，写入 #libCheckBox）
+}
+
+/* 库文件核对：封装引用在 SchLib/PcbLib/OLB/dra+psm 中的真实存在性 */
+const LIBCHECK_STATUS = {
+  ok:      { cls: "ok",   mark: "✓", tail: "" },
+  missing: { cls: "bad",  mark: "✗", tail: "" },
+  nofile:  { cls: "warn", mark: "△", tail: "（库文件缺失）" },
+  nodata:  { cls: "",     mark: "△", tail: "（字段未填）" },
+};
+
+async function loadLibCheck(row) {
+  const box = $("libCheckBox");
+  if (!box) return;
+  try {
+    const j = await api("/api/libcheck", { table: STATE.curTable, data: row });
+    if (!box.isConnected) return;              // 渲染期间详情已切换
+    if (!j.items || !j.items.length) {
+      box.innerHTML = `<div class="comp-head"><span class="comp-label">库文件核对</span>
+        <span class="comp-pct">无可核对的模型字段</span></div>`;
+      return;
+    }
+    box.innerHTML = `<div class="comp-head"><span class="comp-label">库文件核对</span>
+        <span class="comp-pct">${j.items.filter(i => i.status === "ok").length}/${j.items.length} 通过</span></div>
+      <ul class="checklist">` +
+      j.items.map(it => {
+        const s = LIBCHECK_STATUS[it.status] || LIBCHECK_STATUS.nodata;
+        const d = it.detail ? ` — ${esc(it.detail)}` : "";
+        return `<li class="${s.cls}">${s.mark} ${esc(it.label)}：${d}${s.tail}</li>`;
+      }).join("") + `</ul>`;
+  } catch (e) {
+    if (box.isConnected) box.innerHTML =
+      `<div class="comp-head"><span class="comp-label">库文件核对</span>
+       <span class="comp-pct">核对失败：${esc(e.message)}</span></div>`;
+  }
 }
 
 /* 详情面板：只读 / 编辑 双态渲染 */
@@ -279,6 +315,10 @@ function renderDetail() {
     html += "</table>";
     // 检测结果：与添加物料页同款（信息完整度 + 分条检查），仅只读态展示
     html += buildRecordCheckHtml(row, STATE.cols);
+    // 库文件核对：封装引用是否真实存在于 SchLib/PcbLib/OLB/dra+psm
+    html += `<div class="rec-check" id="libCheckBox">
+      <div class="comp-head"><span class="comp-label">库文件核对</span>
+      <span class="comp-pct">核对中…</span></div></div>`;
   }
   if (STATE.editing) {
     html += `<div class="hint" style="margin-top:8px">点 ▾ 展开该表全部已有值供选择；也可直接输入新值。✔ 完成后确认更新 DB，修改日期由系统自动更新为当天。</div>`;
@@ -553,20 +593,25 @@ function mkFieldEl(c, typeVals) {
     STATE.fieldInputs[c] = input;
     return wrap;
   }
-  if (c === "PCB3D Ref") {
+  if (c === "Library Ref" || c === "Footprint Ref" || c === "PCB3D Ref") {
     const input = document.createElement("input");
     input.type = "text";
     input.className = "tint-model";
-    // 封装名变更 → 3D 文件按 StepModel/<封装>.STEP 推导，需重新检测存在性
-    input.oninput = () => { updatePreview(); checkModel3dExists(); };
+    // Ref 变更 → 对应的库文件核对（3D/AD/CD）需刷新
+    input.oninput = () => {
+      updatePreview();
+      if (c === "PCB3D Ref") checkModel3dExists();
+      else checkFootprintRefs();
+    };
     wrap.appendChild(input);
     STATE.fieldInputs[c] = input;
     return wrap;
   }
   if (["Library Path", "Footprint Path", "PCB3D Path"].includes(c)) {
     // 三个库路径行：输入框统一缩短 + 尾部恒定预留位（56px）。
-    // PCB3D Path 的预留位显示「已存在」徽标，其余两行留空占位，
-    // 保证三个文本框等长且不随徽标有无变化。
+    // Library Path 行：AD/CD 两行垂直标注（Altium SCH / Cadence SCH）；
+    // Footprint Path 行：AD/CD（Altium PCB / Cadence PCB）；
+    // PCB3D Path 行：显示「✓ 已存在」。
     const rowDiv = document.createElement("div");
     rowDiv.className = "rowflex";
     rowDiv.style.width = "100%";
@@ -577,10 +622,22 @@ function mkFieldEl(c, typeVals) {
       input.oninput = () => { updatePreview(); checkModel3dExists(); };
       input.title = "3D 模型相对路径（StepModel/封装名.STEP），可手动修改；确认写入时已存在则保留原文件，不存在才从立创官方库下载";
     } else {
-      input.oninput = updatePreview;
+      input.oninput = () => { updatePreview(); checkFootprintRefs(); };
+      input.title = c === "Library Path"
+        ? "SCH 库相对路径（可手动修改）；右侧标注 Altium(AD)/Cadence(CD) 符号核对结果"
+        : "PCB 库相对路径（可手动修改）；右侧标注 Altium(AD)/Cadence(CD) 封装核对结果";
     }
     const reserve = document.createElement("span");
-    reserve.className = "path-reserve" + (c === "PCB3D Path" ? " m3d-status" : "");
+    if (c === "PCB3D Path") {
+      reserve.className = "path-reserve fp-mark m3d-status";
+      reserve.onclick = handleM3dClick;   // 点击查询官方库是否有可下载的 3D 模型
+    } else {
+      reserve.className = "path-reserve fp-check";
+      reserve.dataset.kind = c === "Library Path" ? "sch" : "pcb";
+      // 第一个胶囊 Altium：点击查询官方库可下载性（写入时自动追加）
+      reserve.innerHTML = '<span class="fp-mark" data-cap="altium" title="点击查询官方库是否有可导出的符号数据" onclick="handleLibgenClick(\'' + (c === "Library Path" ? "sch" : "pcb") + '\')"></span>' +
+        '<span class="fp-mark" data-cap="cadence" title="Cadence 库文件（OLB/dra/psm）官方格式需用官方工具导入，点击查看说明" onclick="handleCadenceNote()">Cadence</span>';
+    }
     rowDiv.appendChild(input);
     rowDiv.appendChild(reserve);
     wrap.appendChild(rowDiv);
@@ -809,6 +866,7 @@ function applySNData(sn) {
         : "无可下载规格书";
   }
   checkModel3dExists();   // 带出封装后立即检测 3D 模型是否已存在
+  checkFootprintRefs();   // 同步核对 Altium/Cadence SCH 与 PCB 封装存在性
   updatePreview();
 }
 
@@ -861,16 +919,204 @@ function checkModel3dExists() {
     if (!st) return;
     const path = (STATE.fieldInputs["PCB3D Path"] || {}).value || "";
     const ref = (STATE.fieldInputs["PCB3D Ref"] || {}).value || "";
-    if (!path && !ref) { st.textContent = ""; return; }
+    if (!path || !ref) {
+      st.textContent = "";
+      st.className = "path-reserve fp-mark m3d-status";
+      return;
+    }
+    const downloadable = STATE.m3dPending && STATE.model3d &&
+      (STATE.model3d.uuid || STATE.model3d.uuid_3d);
     try {
       const qs = "path=" + encodeURIComponent(path) + "&ref=" + encodeURIComponent(ref);
       const j = await api("/api/model3d_exists?" + qs);
-      st.textContent = j.exists ? "✓ 已存在" : "";
+      if (j.exists) {
+        STATE.m3dPending = false;
+        st.textContent = "PCB 3D已存在";
+        st.className = "path-reserve fp-mark m3d-status fp-ok";
+      } else if (downloadable) {
+        // 用户已点击确认可下载：跨表重填后保持「待下载」状态
+        st.textContent = "PCB 3D不存在，待下载";
+        st.className = "path-reserve fp-mark m3d-status fp-ok";
+      } else {
+        st.textContent = "PCB 3D不存在";
+        st.className = "path-reserve fp-mark m3d-status fp-bad";
+      }
     } catch (e) {
-      st.textContent = "";   // 检测失败不打扰用户
+      st.textContent = "";
+      st.className = "path-reserve fp-mark m3d-status";
     }
   }, 400);
 }
+
+/* 点击 PCB3D 胶囊：查询官方库是否有该封装的 3D 模型可下载
+   （可下载→绿底「待下载」，写入时自动下载；无→提示并维持红底） */
+function handleM3dClick() {
+  const st = document.querySelector(".m3d-status");
+  if (!st) return;
+  if (st.classList.contains("fp-ok") && st.textContent === "PCB 3D已存在") {
+    toast("该 3D 模型已存在于库目录中，写入时将保留原文件");
+    return;
+  }
+  const m = STATE.model3d;
+  if (!m || (!m.uuid && !m.uuid_3d)) {
+    st.textContent = "PCB 3D不存在";
+    st.className = "path-reserve fp-mark m3d-status fp-bad";
+    toast("无可下载的封装：官方库未关联该封装的 3D 模型", true);
+    return;
+  }
+  st.textContent = "PCB 3D不存在，待下载";
+  st.className = "path-reserve fp-mark m3d-status fp-ok";
+  STATE.m3dPending = true;   // 已确认可下载：换表重填后保持待下载状态
+  toast("官方库有该封装的 3D 模型，确认写入时将自动下载到 PCB3D Path");
+}
+
+/* AD/CD 双行核对：Library Path 行标 Altium SCH + Cadence SCH，
+   Footprint Path 行标 Altium PCB + Cadence PCB（500ms 去抖） */
+const FP_TAG = { altium_sch: "Altium", cadence_sch: "Cadence", altium_pcb: "Altium", cadence_pcb: "Cadence" };
+const FP_MARK = { ok: "✓", missing: "✗", nofile: "△" };
+const FP_CLS = { ok: "fp-ok", missing: "fp-bad", nofile: "fp-warn" };
+const FP_KIND_LABEL = { sch: "原理图符号", pcb: "PCB 封装" };
+
+function paintFpMark(el, key, r, pending) {
+  if (!el) return;
+  const status = r ? r.status : "";
+  if (!status || status === "nodata") {
+    el.textContent = "";
+    el.className = "fp-mark";
+    el.title = "";
+    return;
+  }
+  if (status === "missing" && pending) {
+    el.textContent = FP_TAG[key];
+    el.className = "fp-mark fp-pend";
+    el.title = `${FP_TAG[key]}：待下载（确认写入时自动追加到库文件）`;
+    return;
+  }
+  el.textContent = FP_TAG[key];
+  el.className = "fp-mark " + (FP_CLS[status] || "");
+  el.title = r.detail ? `${FP_TAG[key]}：${status === "ok" ? "存在" : status === "missing" ? "不存在" : "库文件缺失"} — ${r.detail}`
+                      : `${FP_TAG[key]}：${status === "ok" ? "存在" : status === "missing" ? "不存在" : "库文件缺失"}`;
+}
+
+let fpCheckTimer = null;
+function checkFootprintRefs() {
+  clearTimeout(fpCheckTimer);
+  fpCheckTimer = setTimeout(async () => {
+    const boxes = document.querySelectorAll(".fp-check");
+    (window.FP_DEBUG = window.FP_DEBUG || []).push({ step: "run", boxes: boxes.length });
+    if (!boxes.length) { toast("AD/CD 诊断：页面上没有 .fp-check 容器", true); return; }
+    const val = c => (STATE.fieldInputs[c] || {}).value || "";
+    const d = {
+      library_ref: val("Library Ref"), library_path: val("Library Path"),
+      footprint_ref: val("Footprint Ref"), footprint_path: val("Footprint Path"),
+    };
+    (window.FP_DEBUG = window.FP_DEBUG || []).push({ step: "req", d });
+    try {
+      const j = await api("/api/libcheck_fp", d);
+      (window.FP_DEBUG = window.FP_DEBUG || []).push({ step: "res", j });
+      boxes.forEach(box => {
+        const marks = box.querySelectorAll(".fp-mark");
+        const kind = box.dataset.kind;
+        if (marks.length < 2) { toast(`AD/CD 诊断：${kind} 行标记位不足`, true); return; }
+        const pend = STATE.libgenPending[kind] && STATE.sn;
+        if (j["altium_" + kind] && j["altium_" + kind].status === "ok") {
+          STATE.libgenPending[kind] = false;   // 文件已在库，待下载态解除
+        }
+        paintFpMark(marks[0], "altium_" + kind, j["altium_" + kind], pend);
+        paintFpMark(marks[1], "cadence_" + kind, j["cadence_" + kind]);
+      });
+    } catch (e) {
+      (window.FP_DEBUG = window.FP_DEBUG || []).push({ step: "err", msg: e.message });
+      toast("AD/CD 核对失败: " + e.message, true);
+      document.querySelectorAll(".fp-mark").forEach(el => { el.textContent = ""; });
+    }
+  }, 500);
+}
+
+/* 点击 Altium 胶囊：查询官方库是否有可导出的符号/封装数据（写入时自动追加） */
+async function handleLibgenClick(kind) {
+  const box = document.querySelector(`.fp-check[data-kind="${kind}"]`);
+  const cap = box && box.querySelector('[data-cap="altium"]');
+  if (!cap) return;
+  if (cap.classList.contains("fp-pend")) {
+    toast("已确认待下载：确认写入时将自动追加到库文件");
+    return;
+  }
+  if (cap.classList.contains("fp-ok")) {
+    toast("该引用已存在于库文件中");
+    return;
+  }
+  if (!STATE.sn) {
+    toast("请先查询立创 SN（下载来源为官方库数据）", true);
+    return;
+  }
+  toast("查询官方库…");
+  try {
+    const j = await api("/api/libgen_check", { kind, sn: STATE.sn });
+    if (!j.available) {
+      toast(`无可下载的${FP_KIND_LABEL[kind]}：官方库未提供该数据`, true);
+      return;
+    }
+    STATE.libgenPending[kind] = true;
+    paintFpMark(cap, "altium_" + kind, { status: "missing" }, true);
+    toast(`官方库有${FP_KIND_LABEL[kind]}数据（${j.name}），确认写入时将自动追加到库文件`);
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+/* Cadence 胶囊说明：官方私有格式暂不支持自动写入 */
+function handleCadenceNote() {
+  alert("Cadence 说明\n\n官方库带符号/封装完整几何数据，但 Cadence 的 OLB / dra / psm 为官方私有格式，暂不支持自动写入库文件。\n\n可选路径：基于官方库数据生成 OrCAD XML（Capture 导入）或 Allegro SKILL 脚本（自动绘制各层），后续版本提供。");
+}
+
+/* ================= 自测模式（URL 带 ?selftest=<SN>）================= */
+(function () {
+  const sn = new URLSearchParams(location.search).get("selftest");
+  if (!sn) return;
+  setTimeout(async () => {
+    const out = [];
+    try {
+      await boot();
+      out.push("boot 完成, tables=" + (STATE.tables || []).length);
+      $("snInput").value = sn;
+      switchView("add");
+      await fetchSN();
+      out.push("fetchSN 完成");
+      await new Promise(r => setTimeout(r, 1500));
+      const boxes = [...document.querySelectorAll(".fp-check")];
+      out.push("fp-check 容器数: " + boxes.length);
+      boxes.forEach(b => {
+        out.push(`  [${b.dataset.kind}] marks=${b.querySelectorAll(".fp-mark").length} ` +
+          [...b.querySelectorAll(".fp-mark")].map(m => JSON.stringify(m.textContent)).join(" "));
+      });
+      out.push("LibraryRef=" + JSON.stringify((STATE.fieldInputs["Library Ref"] || {}).value));
+      out.push("FootprintRef=" + JSON.stringify((STATE.fieldInputs["Footprint Ref"] || {}).value));
+      out.push("PCB3DPath=" + JSON.stringify((STATE.fieldInputs["PCB3D Path"] || {}).value));
+      out.push("FP_DEBUG=" + JSON.stringify(window.FP_DEBUG || []));
+      // 自动点击 PCB3D 胶囊验证可下载性查询
+      handleM3dClick();
+      await new Promise(r => setTimeout(r, 100));
+      const ms = document.querySelector(".m3d-status");
+      out.push("点击后胶囊: " + JSON.stringify(ms ? ms.textContent : "(无)") + " cls=" + (ms ? ms.className : ""));
+      // 自动点击 Altium 胶囊（SCH 行）验证符号可下载性查询
+      await handleLibgenClick("sch");
+      await new Promise(r => setTimeout(r, 800));
+      const ac = document.querySelector('.fp-check[data-kind="sch"] [data-cap="altium"]');
+      out.push("点击Altium后: " + JSON.stringify(ac ? ac.textContent : "(无)") + " cls=" + (ac ? ac.className : ""));
+    } catch (e) {
+      out.push("SELFTEST-ERR: " + (e.stack || e.message));
+    }
+    let pre = document.getElementById("selftestOut");
+    if (!pre) {
+      pre = document.createElement("pre");
+      pre.id = "selftestOut";
+      document.body.appendChild(pre);
+    }
+    pre.style.cssText = "position:fixed;inset:0;z-index:99999;background:#fff;color:#000;font-size:12px;padding:8px;white-space:pre-wrap;";
+    pre.textContent = out.join("\n");
+  }, 300);
+})();
 
 async function fetchSN() {
   const sn = $("snInput").value.trim().toUpperCase();
@@ -904,6 +1150,9 @@ async function fetchSN() {
         STATE.fieldInputs["Part Number"].value = j.suggest_part_number;
       }
       // 规格书：C2D 默认 DataSheet；C2URL = DataSheet/表名前缀/器件型号.pdf；无规格书如实标注
+      STATE.m3dPending = false;   // 新 SN：重置 3D 待下载状态（需重新点击胶囊确认）
+      STATE.sn = sn;              // 符号/封装下载来源
+      STATE.libgenPending = { sch: false, pcb: false };
       STATE.lastSN = { data: j.data, suggest_fields: j.suggest_fields,
                        suggest_part_number: j.suggest_part_number,
                        datasheet_url: j.datasheet_url,
@@ -930,6 +1179,9 @@ function manualMode() {
   STATE.lastSN = null;          // 手动录入：清除 SN 缓存
   STATE.lastDatasheet = "";     // 避免预览误开上一次 SN 的链接
   STATE.model3d = null;         // 手动录入无 3D 模型来源
+  STATE.m3dPending = false;
+  STATE.sn = "";
+  STATE.libgenPending = { sch: false, pcb: false };
   rebuildForm();
 }
 
@@ -961,11 +1213,17 @@ async function confirmAdd() {
         datasheet_url: STATE.lastDatasheet,
         local_file: STATE.pickedFile,
         model3d: STATE.model3d,
+        libgen_pending: {
+          sch: STATE.libgenPending.sch ? STATE.sn : "",
+          pcb: STATE.libgenPending.pcb ? STATE.sn : "",
+        },
       });
       closeModal();
       STATE.pickedFile = "";
       STATE.lastDatasheet = "";
       STATE.model3d = null;
+      STATE.m3dPending = false;
+      STATE.libgenPending = { sch: false, pcb: false };
       STATE.lastSN = null;      // 该 SN 已入库，清除缓存
       toast(`已写入 [${table}]：${data["Component Type"] || ""}` +
         (j.warn ? ` ｜ ${j.warn}` : ""), !!j.warn && /失败|未/.test(j.warn));

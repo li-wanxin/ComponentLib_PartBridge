@@ -37,7 +37,9 @@ def _start_server() -> tuple[threading.Thread, str]:
     port = srv.server_address[1]
     t = threading.Thread(target=srv.serve_forever, daemon=True, name="http")
     t.start()
-    return t, f"http://127.0.0.1:{port}/"
+    import time
+    # 启动 URL 加时间戳：强制 WebView2 拉取最新 index.html（其内再注入 css/js mtime 版本）
+    return t, f"http://127.0.0.1:{port}/?t={int(time.time())}"
 
 
 class Api:

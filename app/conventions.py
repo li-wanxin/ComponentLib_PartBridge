@@ -121,10 +121,10 @@ def suggest_library_fields(table: str, package: str = "", lib_root: str = ""):
     s["Footprint Path"] = pcb
     s["Footprint Ref"] = package or ""
 
-    # 3D：仓库实际为平铺 StepModel/<封装>.STEP
+    # 3D：仓库实际为平铺 StepModel/<封装>.STEP；PCB3D Path 只存目录，文件名由封装名决定
     if package:
         s["PCB3D Ref"] = package
-        s["PCB3D Path"] = f"StepModel/{package}.STEP"
+        s["PCB3D Path"] = "StepModel"
 
     # 用真实目录校验：若库根存在且建议的文件不存在，则扫描目录找匹配文件
     if lib_root:

@@ -11,9 +11,17 @@ dataStr.head.c_para（Manufacturer/Value/package/Supplier Part 等）。
 此时如实报告并由 UI 兜底手动填写。
 """
 import gzip
+import http.client
 import json
+import random
 import re
+import socket
 import ssl
+import struct
+import threading
+import time
+import urllib.error
+import urllib.parse
 import urllib.request
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -99,7 +107,7 @@ class LcscResult:
         return bool(self.data.get("Component Type"))
 
 
-def _http_json(url, timeout=15):
+def _http_json(url, timeout=15, prefer_ip=False):
     h = {
         "Accept-Encoding": "gzip",
         "Accept": "application/json, text/javascript, */*; q=0.01",
@@ -107,12 +115,143 @@ def _http_json(url, timeout=15):
         "User-Agent": UA,
         "Referer": "https://easyeda.com/",
     }
-    req = urllib.request.Request(url, headers=h)
-    with urllib.request.urlopen(req, timeout=timeout, context=CTX) as r:
-        raw = r.read()
-        if raw[:2] == b"\x1f\x8b":
-            raw = gzip.decompress(raw)
-        return json.loads(raw.decode("utf-8", "replace"))
+    try:
+        if prefer_ip:
+            with urlopen_smart(url, timeout=timeout, headers=h, prefer_ip=True) as r:
+                raw = r.read()
+        else:
+            req = urllib.request.Request(url, headers=h)
+            with urllib.request.urlopen(req, timeout=timeout, context=CTX) as r:
+                raw = r.read()
+    except Exception:
+        raw = _http_get_ip_fallback(url, timeout, h)
+    if raw[:2] == b"\x1f\x8b":
+        raw = gzip.decompress(raw)
+    return json.loads(raw.decode("utf-8", "replace"))
+
+
+# ---------- DNS 兜底与 IP 直连（2026-11-17：本地 DNS 解析 wmsc.lcsc.com 失败时自愈） ----------
+_DNS_SERVERS = ("223.5.5.5", "114.114.114.114")   # 阿里 / 114 公共 DNS
+_RESOLVE_CACHE = {}                                # domain -> (ips, expire_ts)
+
+
+def _dns_query_a(name, server, timeout=3):
+    """向指定 DNS 服务器查 A 记录（stdlib UDP 最小实现，返回 IP 列表）。"""
+    tid = random.randint(0, 0xFFFF)
+    header = struct.pack(">HHHHHH", tid, 0x0100, 1, 0, 0, 0)
+    q = b"".join(bytes([len(p)]) + p.encode() for p in name.split(".")) + b"\x00"
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.settimeout(timeout)
+    try:
+        s.sendto(header + q + struct.pack(">HH", 1, 1), (server, 53))
+        data, _ = s.recvfrom(4096)
+    finally:
+        s.close()
+    if len(data) < 12 or struct.unpack(">H", data[:2])[0] != tid:
+        return []
+    ancount = struct.unpack(">H", data[6:8])[0]
+    i = 12                                   # 跳过问题区
+    while data[i] != 0:
+        i += data[i] + 1
+    i += 5
+    ips = []
+    for _ in range(ancount):
+        if data[i] & 0xC0 == 0xC0:
+            i += 2                           # 压缩指针
+        else:
+            while data[i] != 0:
+                i += data[i] + 1
+            i += 1
+        rtype, _, _, rdlen = struct.unpack(">HHIH", data[i:i + 10])
+        i += 10
+        if rtype == 1 and rdlen == 4:
+            ips.append(".".join(str(b) for b in data[i:i + 4]))
+        i += rdlen
+    return ips
+
+
+def _getaddrinfo_fast(host, timeout=2.0):
+    """带超时的系统 DNS 解析：本地 DNS 故障时 getaddrinfo 可能阻塞 5-10s，超时即放弃。"""
+    result = []
+
+    def _run():
+        try:
+            result.extend([ai[4][0] for ai in
+                           socket.getaddrinfo(host, 443, socket.AF_INET)][:4])
+        except Exception:
+            pass
+
+    threading.Thread(target=_run, daemon=True).start()
+    deadline = time.time() + timeout
+    while not result and time.time() < deadline:
+        time.sleep(0.05)
+    return result
+
+
+def resolve_host(name):
+    """域名解析：系统 DNS（2s 快速失败）→ 公共 DNS 兜底。
+    成功缓存 300s，失败负缓存 30s（避免每次查询都等 DNS 超时）。"""
+    now = time.time()
+    hit = _RESOLVE_CACHE.get(name)
+    if hit and hit[1] > now:
+        return hit[0]
+    ips = _getaddrinfo_fast(name)
+    if not ips:
+        for srv in _DNS_SERVERS:
+            try:
+                ips = _dns_query_a(name, srv)
+                if ips:
+                    break
+            except Exception:
+                continue
+    _RESOLVE_CACHE[name] = (ips, now + (300 if ips else 30))
+    return ips
+
+
+def urlopen_smart(url, timeout=15, headers=None, prefer_ip=False):
+    """增强版 GET：默认先常规请求、失败走 IP 直连兜底；
+    prefer_ip=True 时跳过常规请求直接 IP 直连（用于已知本地 DNS 故障的域名）。
+    返回响应对象（含 .read()/.status）。"""
+    if isinstance(url, urllib.request.Request):
+        headers = {k: v for k, v in url.header_items()} or (headers or {})
+        url = url.full_url
+    if not prefer_ip:
+        try:
+            req = urllib.request.Request(url, headers=headers or {})
+            return urllib.request.urlopen(req, timeout=timeout, context=CTX)
+        except urllib.error.HTTPError:
+            raise
+        except Exception:
+            pass                                    # DNS/代理/超时 → IP 直连兜底
+    u = urllib.parse.urlparse(url)
+    host = u.hostname
+    path = (u.path or "/") + (("?" + u.query) if u.query else "")
+    ips = resolve_host(host)
+    if not ips:
+        raise RuntimeError(f"无法解析 {host}（系统与公共 DNS 均失败）")
+    last = None
+    for ip in ips:
+        try:
+            s = socket.create_connection((ip, 443), timeout=timeout)
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            ss = ctx.wrap_socket(s, server_hostname=host)
+            h = {"Host": host, "User-Agent": UA, "Accept": "*/*",
+                 "Connection": "close"}   # 不带 gzip：保证二进制（如 PDF）原样落盘
+            h.update(headers or {})
+            conn = http.client.HTTPSConnection(host)
+            conn.sock = ss                      # 复用带 SNI 的握手连接
+            conn.request("GET", path, headers=h)
+            return conn.getresponse()
+        except Exception as e:
+            last = e
+    raise last if last else RuntimeError("IP 直连兜底失败")
+
+
+def _http_get_ip_fallback(url, timeout, headers):
+    with urlopen_smart(url, timeout=timeout, headers=headers) as r:
+        return r.read()
 
 
 def _provider_easyeda(sn, res: LcscResult):
@@ -248,18 +387,30 @@ def _tags_to_table(tag: str) -> str:
     return ""
 
 
+_WMSC_CACHE = {}   # sn -> (result dict 或 None, expire_ts)；成功 600s / 失败 20s（避免同 SN 重复慢查询拖累）
+
+
 def _fetch_wmsc_detail(sn: str) -> dict:
-    """LCSC 商品详情（wmsc 接口）：pdfUrl / productDescEn / productNameEn 等。"""
+    """LCSC 商品详情（wmsc 接口）：pdfUrl / productDescEn / productNameEn 等。
+    DNS 故障时走公共 DNS 兜底直连；同 SN 结果进程内缓存，避免一次查询调两次拖慢。"""
     sn = (sn or "").strip().upper()
     if not re.fullmatch(r"C\d{3,10}", sn):
         return {}
+    now = time.time()
+    hit = _WMSC_CACHE.get(sn)
+    if hit and hit[1] > now:
+        return hit[0] or {}
+    detail = {}
     try:
         obj = _http_json(
-            f"https://wmsc.lcsc.com/ftps/wm/product/detail?productCode={sn}"
+            f"https://wmsc.lcsc.com/ftps/wm/product/detail?productCode={sn}",
+            timeout=6, prefer_ip=True,   # wmsc 域名本地 DNS 常态故障：直接 IP 直连
         )
-        return obj.get("result") or {}
+        detail = obj.get("result") or {}
     except Exception:
-        return {}
+        detail = {}
+    _WMSC_CACHE[sn] = (detail, now + (600 if detail else 20))
+    return detail
 
 
 def fetch_datasheet_url(sn: str) -> str:

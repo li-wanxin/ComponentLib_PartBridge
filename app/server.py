@@ -6,6 +6,7 @@
 """
 import json
 import os
+import re
 import shutil
 import threading
 import urllib.request
@@ -15,10 +16,15 @@ from urllib.parse import urlparse, parse_qs
 from db import MdbDatabase, MdbError
 import conventions as conv
 import lcsc
+import libcheck
+import libgen
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_PATH = os.path.join(APP_DIR, "settings.json")
 WEB_DIR = os.path.join(APP_DIR, "web")
+
+# 诊断期改名资源 → 源文件映射（appv2.* 实际返回源文件内容，避免双份维护）
+_STATIC_ALIAS = {"appv2.js": "app.js", "appv2.css": "style.css"}
 
 REQUIRED = conv.REQUIRED_KEYS
 
@@ -118,6 +124,7 @@ class Handler(BaseHTTPRequestHandler):
     # ---------- 静态文件 ----------
     def _serve_static(self, path):
         rel = path.lstrip("/") or "index.html"
+        rel = _STATIC_ALIAS.get(rel, rel)
         full = os.path.normpath(os.path.join(WEB_DIR, rel))
         if not full.startswith(WEB_DIR) or not os.path.exists(full):
             self.send_response(404)
@@ -129,6 +136,18 @@ class Handler(BaseHTTPRequestHandler):
                  ".png": "image/png", ".ico": "image/x-icon"}.get(
             os.path.splitext(full)[1], "application/octet-stream")
         data = open(full, "rb").read()
+        if full.endswith(".html"):
+            # css/js 引用注入 mtime 版本号：文件一改，WebView2 缓存即失效（防旧脚本）
+            import re as _re
+
+            def _inject(m):
+                name = m.group(1).decode()
+                ap = os.path.join(WEB_DIR, _STATIC_ALIAS.get(name, name))
+                if os.path.exists(ap):
+                    return f"{name}?v={int(os.path.getmtime(ap))}".encode() + b'"'
+                return m.group(0)          # 文件不存在：原样返回（含引号）
+
+            data = _re.sub(rb"([A-Za-z0-9_]+\.(?:css|js))\"", _inject, data)
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
@@ -243,8 +262,8 @@ class Handler(BaseHTTPRequestHandler):
                 req = urllib.request.Request(ds_url, headers={"User-Agent": lcsc.UA})
                 tmp = dest_n + ".part"
                 got = 0
-                with urllib.request.urlopen(req, timeout=60, context=lcsc.CTX) as r, \
-                        open(tmp, "wb") as f:
+                # urlopen_smart：DNS 解析失败时公共 DNS 兜底 + IP 直连
+                with lcsc.urlopen_smart(req, timeout=60) as r, open(tmp, "wb") as f:
                     while True:
                         chunk = r.read(65536)
                         if not chunk:
@@ -266,19 +285,22 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---------- 3D 模型落盘 ----------
     def _model3d_target(self, data, st):
-        """由 PCB3D Path（缺省时按 PCB3D Ref 生成 StepModel/<封装>.STEP，仓库约定）
-        计算模型目标绝对路径；路径无效返回空串。"""
+        """定位 3D 模型目标文件。PCB3D Path 语义为目录（如 StepModel），
+        文件名由 PCB3D Ref 决定：<Path>/<Ref>.STEP；
+        兼容旧数据：Path 直接以 .step 结尾时视为完整文件路径。
+        Path 与 Ref 均缺失或无法定位时返回空串。"""
         path = (data.get("PCB3D Path") or "").strip()
+        ref = (data.get("PCB3D Ref") or "").strip()
+        for ch in '\\/:*?"<>|':
+            ref = ref.replace(ch, "")
         if not path:
-            pkg = (data.get("PCB3D Ref") or "").strip()
-            for ch in '\\/:*?"<>|':
-                pkg = pkg.replace(ch, "")
-            if not pkg:
+            path = "StepModel"
+            if not ref:
                 return ""
-            path = f"StepModel/{pkg}.STEP"
-        if not path.lower().endswith(".step"):
-            return ""
-        dest = path.replace("/", os.sep)
+        p = path.replace("\\", "/").rstrip("/")
+        if not p.lower().endswith(".step") and not ref:
+            return ""                              # 目录语义但无封装名
+        dest = p if p.lower().endswith(".step") else f"{p}/{ref}.STEP"
         if not os.path.isabs(dest):
             dest = os.path.join(st.lib_root or os.getcwd(), dest)
         return os.path.normpath(dest)
@@ -310,7 +332,10 @@ class Handler(BaseHTTPRequestHandler):
         dest_n = self._model3d_target(data, st)
         if not dest_n:
             return ""
-        target = (data.get("PCB3D Path") or f"StepModel/{data.get('PCB3D Ref')}.STEP").strip()
+        try:
+            target = os.path.relpath(dest_n, st.lib_root).replace(os.sep, "/") if st.lib_root else dest_n
+        except ValueError:
+            target = dest_n
         root_n = os.path.normpath(st.lib_root) if st.lib_root else ""
         inside = bool(root_n) and dest_n.lower().startswith(root_n.lower() + os.sep)
         try:
@@ -401,7 +426,30 @@ class Handler(BaseHTTPRequestHandler):
             warn3d = self._handle_model3d(data, model3d, st)
             if warn3d:
                 st.log("warn", f"[{table}] 3D 模型: {warn3d}")
-            warn = " ｜ ".join(w for w in (warn, warn3d) if w)
+            # Altium 符号/封装追加（用户点击胶囊确认待下载的项；失败不影响入库结果）
+            libgen_pending = body.get("libgen_pending") or {}
+            libgen_msgs = []
+            for kind, key in (("sch", "sch"), ("pcb", "pcb")):
+                sn_p = (libgen_pending.get(key) or "").strip().upper()
+                if not sn_p:
+                    continue
+                rel = (data.get("Library Path") if kind == "sch" else data.get("Footprint Path")) or ""
+                if not rel.strip():
+                    libgen_msgs.append(f"{kind.upper()}：Library/Footprint Path 未填，未追加")
+                    continue
+                try:
+                    r = libgen.download_and_append(kind, sn_p, st.lib_root, rel)
+                    libgen_msgs.append(f"{kind.upper()}：{r['message']}" +
+                                       (f"（生成名: {r['name']}）" if r.get("name") and r["status"] == "ok" else ""))
+                    st.log("ok" if r["status"] == "ok" else "warn", f"[{table}] {kind.upper()} 符号/封装: {r['message']}")
+                except Exception as e:
+                    libgen_msgs.append(f"{kind.upper()}：追加失败 {e}")
+                    st.log("warn", f"[{table}] {kind.upper()} 追加失败: {e}")
+            if libgen_msgs:
+                libgen_msgs.insert(0, "符号/封装")
+            warn_lib = " ｜ ".join(libgen_msgs)
+            warns = [w for w in (warn, warn3d, warn_lib) if w]
+            warn = " ｜ ".join(warns)
             return self._ok(warn=warn)
         if p == "/api/update":
             if not st.ensure_db():
@@ -454,6 +502,37 @@ class Handler(BaseHTTPRequestHandler):
             data = {"PCB3D Path": body.get("path") or "", "PCB3D Ref": body.get("package") or ""}
             warn = self._handle_model3d(data, body.get("model3d") or body, st)
             return self._ok(warn=warn)
+        if p == "/api/libcheck":
+            if not st.ensure_db():
+                return self._err("未连接数据库")
+            table = body.get("table", "")
+            data = body.get("data", {})
+            if not data:
+                return self._err("缺少记录数据")
+            with st.lock:
+                items = libcheck.check_record(st.lib_root, table, data)
+            return self._ok(items=items)
+        if p == "/api/libcheck_fp":
+            if not st.ensure_db():
+                return self._err("未连接数据库")
+            with st.lock:
+                res = libcheck.check_fields(st.lib_root, body)
+            return self._ok(**res)
+        if p == "/api/libgen_check":
+            # 点击 Altium/Cadence 胶囊：官方库是否有可导出的符号/封装数据
+            sn = (body.get("sn") or "").strip().upper()
+            kind = body.get("kind") or "sch"
+            if not re.fullmatch(r"C\d{3,10}", sn):
+                return self._err("SN 格式不符")
+            try:
+                data = libgen.fetch_cad_data(sn)   # 内部无缓存，进程级缓存一层
+                avail = libgen.availability(data)
+            except Exception as e:
+                return self._err(f"官方库查询失败: {e}")
+            available = avail.get("symbol" if kind == "sch" else "footprint", False)
+            return self._ok(available=bool(available),
+                            name=str(data.get("title") or "") if kind == "sch"
+                            else str((data.get("packageDetail") or {}).get("title") or ""))
         if p == "/api/settings":
             s = st.settings
             if "dark" in body:

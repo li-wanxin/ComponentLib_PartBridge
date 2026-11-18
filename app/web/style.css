@@ -213,8 +213,8 @@ input.search:focus { border-color: var(--acc-line); box-shadow: 0 0 0 2px rgba(7
 /* 封装成对行：名称窄、路径宽 */
 .pair-row .fld:first-child { flex: 1 1 200px; min-width: 170px; }
 .pair-row .fld:last-child { flex: 2 1 300px; min-width: 240px; }
-/* 三个库路径文本框：统一缩短（300→250），尾部空间留给「已存在」徽标 */
-.pair-row .fld.path-fld { flex: 2 1 250px; min-width: 200px; }
+/* 三个库路径列与数据文档组同规则（纵向对齐），尾部预留位给核对胶囊 */
+.pair-row .fld.path-fld { flex: 2 1 300px; min-width: 240px; }
 /* 详情标题右侧按钮 */
 .detail-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .dt-btns { display: inline-flex; gap: 6px; }
@@ -314,9 +314,26 @@ td.mono:has(.dt-input) { padding: 3px 5px; }
 .rowflex { display: flex; gap: 6px; align-items: center; min-width: 0; }
 .rowflex select, .rowflex input { flex: 1; min-width: 0; }
 /* 三个库路径行的尾部恒定预留位（56px）：三个文本框等长且不随徽标有无变化 */
-.path-reserve { flex: none; min-width: 56px; white-space: nowrap; font-size: 12px; font-weight: 600; }
+.path-reserve { flex: none; min-width: 64px; white-space: nowrap; font-size: 12px; font-weight: 600; }
 /* PCB3D Path 预留位显示「已存在」徽标 */
 .path-reserve.m3d-status { color: var(--ok); }
+/* 三个库路径行的尾部预留位（等宽恒定）：SCH/PCB 行放 AD/CD 胶囊横排，PCB3D 行放单个胶囊 */
+.path-reserve { flex: none; min-width: 118px; white-space: nowrap; font-size: 12px; font-weight: 600; }
+.path-reserve.m3d-status { display: inline-block; text-align: center; cursor: pointer; }
+/* Altium/Cadence 彩色胶囊：横排，统一等宽 */
+.fp-check { display: flex; flex-direction: row; gap: 5px; justify-content: flex-start; align-items: center; }
+.fp-mark {
+  display: inline-block; padding: 2px 8px; border-radius: 10px;
+  font-size: 11px; font-weight: 600; line-height: 1.4; white-space: nowrap;
+  min-width: 54px; text-align: center;
+}
+.fp-check .fp-mark, .path-reserve.m3d-status { cursor: pointer; }
+.fp-mark.fp-ok { background: rgba(45, 212, 194, .18); color: var(--ok); }
+.fp-mark.fp-bad { background: rgba(242, 85, 90, .18); color: var(--err); }
+.fp-mark.fp-warn { background: rgba(240, 168, 60, .22); color: var(--warn); }
+.fp-mark.fp-pend { background: rgba(79, 156, 249, .18); color: var(--accent); }
+/* PCB3D 单胶囊占满预留位（与上方两胶囊总宽一致），输入框三行等宽 */
+.path-reserve.fp-mark.m3d-status { min-width: 118px; }
 /* 供应商等单行分组：同行排布，窄窗自动换行 */
 .grp-row { display: flex; flex-wrap: wrap; gap: 10px; }
 .grp-row .fld { flex: 1 1 240px; min-width: 200px; }
