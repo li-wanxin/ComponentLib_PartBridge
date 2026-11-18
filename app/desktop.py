@@ -139,7 +139,17 @@ def main() -> None:
     )
     api._window = window
     print(f"桌面窗口已启动: {url}")
+    # WebView2 用户数据（缓存/Local Storage 等）统一放软件目录下，
+    # 不散落在用户 AppData（安装版=安装目录，绿色版=exe 所在目录）
+    if getattr(sys, "frozen", False):
+        _data_dir = os.path.join(os.path.dirname(sys.executable), "UserData")
+    else:
+        _data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UserData")
     try:
+        os.makedirs(_data_dir, exist_ok=True)
+        webview.start(debug=False, private_mode=False, storage_path=_data_dir)
+    except TypeError:
+        # 旧版 pywebview 不支持 storage_path
         webview.start(debug=False, private_mode=False)
     except Exception as exc:
         # WebView2 运行时缺失等情况下退回浏览器，保证软件仍可用

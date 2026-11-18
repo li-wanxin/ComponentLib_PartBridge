@@ -33,6 +33,10 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加图标："; Flags: checkedonce
 
+[Dirs]
+; 授予 Users 组写权限：settings.json / UserData 缓存等软件数据统一存放在安装目录下
+Name: "{app}"; Permissions: users-modify
+
 [Files]
 Source: "..\release\portable\PartBridge.exe"; DestDir: "{app}"; Flags: ignoreversion
 

@@ -1292,6 +1292,25 @@ function newTypeValue(selectEl) {
     });
 }
 
+/* 点击侧栏库路径卡片 → 文件选择器选新 mdb → 立即保存并重连 */
+async function changeDbFromSidebar() {
+  if (!(window.pywebview && window.pywebview.api && window.pywebview.api.pick_db_file)) {
+    toast("浏览器模式无文件对话框，请到设置页粘贴路径", true);
+    return;
+  }
+  const r = await window.pywebview.api.pick_db_file();
+  if (!r || r.cancelled) return;
+  if (!r.ok) { toast(r.error || "选择文件失败", true); return; }
+  try {
+    await api("/api/settings", { db_path: r.path });
+    $("dbPathInput").value = r.path;
+    toast("库路径已切换：" + r.path);
+    await reloadDb();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
 /* ================= 设置 ================= */
 async function pickDbFile() {
   if (window.pywebview && window.pywebview.api && window.pywebview.api.pick_db_file) {
@@ -1340,6 +1359,7 @@ function bindEvents() {
   $("snSkipBtn").onclick = manualMode;
   $("addBtn").onclick = confirmAdd;
   $("reloadBtn").onclick = reloadDb;
+  $("dbCard").onclick = changeDbFromSidebar;
   $("browseDbBtn").onclick = pickDbFile;
   $("saveSettingsBtn").onclick = saveSettings;
   $("themeBtn").onclick = toggleTheme;
