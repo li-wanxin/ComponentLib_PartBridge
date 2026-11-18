@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import threading
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -20,7 +21,13 @@ import libcheck
 import libgen
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-SETTINGS_PATH = os.path.join(APP_DIR, "settings.json")
+if getattr(sys, "frozen", False):
+    # PyInstaller 冻结模式：静态资源在解包目录（_MEIPASS），
+    # settings.json 放 exe 旁边持久化（解包目录每次启动会重建）
+    APP_DIR = sys._MEIPASS
+    SETTINGS_PATH = os.path.join(os.path.dirname(sys.executable), "settings.json")
+else:
+    SETTINGS_PATH = os.path.join(APP_DIR, "settings.json")
 WEB_DIR = os.path.join(APP_DIR, "web")
 
 # 诊断期改名资源 → 源文件映射（appv2.* 实际返回源文件内容，避免双份维护）
