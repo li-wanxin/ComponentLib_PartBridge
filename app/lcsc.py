@@ -495,6 +495,42 @@ def _fmt_capacitor_value(v, desc) -> str:
     return out
 
 
+def resolve_suggest_table(suggested: str, tables):
+    """把理想表名动态解析为库中真实存在的表——表结构可能被用户合并/改名，
+    不能写死映射（如 BJT/MOSFET 已并入统一的 Transistors 表）。
+
+    匹配顺序（返回 (表名或"", 候选列表)）：
+    1. 大小写不敏感精确匹配
+    2. 第二段模糊：Transistors-MOSFETs → 库中含 "mosfet" 的表
+    3. 顶层大类唯一：Transistors-* → 库中 Transistors 开头的表只有一张则命中
+    解析失败时返回候选列表，交前端提示用户手选。"""
+    suggested = (suggested or "").strip()
+    names = [t for t in (tables or []) if t]
+    if not suggested or not names:
+        return "", []
+    low = {t.casefold(): t for t in names}
+    # 1. 精确（大小写不敏感）
+    if suggested.casefold() in low:
+        return low[suggested.casefold()], []
+    # 2. 第二段模糊（mosfets → mosfet 包含于表名）
+    parts = suggested.split("-", 1)
+    if len(parts) == 2 and parts[1].strip():
+        seg2 = parts[1].strip().casefold().rstrip("s")
+        cands = sorted(t for t in names if seg2 and seg2 in t.casefold())
+        if len(cands) == 1:
+            return cands[0], []
+        if cands:
+            return "", cands
+    # 3. 顶层大类（Transistors-* → Transistors 开头的表）
+    prefix = parts[0].strip().casefold()
+    cands = sorted(t for t in names if t.casefold().startswith(prefix))
+    if len(cands) == 1:
+        return cands[0], []
+    if cands:
+        return "", cands
+    return "", []
+
+
 def fetch(sn: str) -> LcscResult:
     sn = sn.strip().upper()
     res = LcscResult()

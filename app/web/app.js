@@ -1164,9 +1164,32 @@ async function fetchSN() {
         (j.suggest_table ? ` ｜ 建议表：${j.suggest_table}` : "");
       $("snStatus").title = j.logs.join("\n");
       if (j.suggest_table) {
-        $("tableSelect").value = j.suggest_table;
         $("aiBadge").classList.remove("hidden");
-        $("catHint").textContent = `立创分类 → ${j.suggest_table}`;
+        const sel = $("tableSelect");
+        const prev = sel.value;
+        sel.value = j.suggest_table;
+        if (sel.value === j.suggest_table) {
+          $("catHint").textContent = `立创分类 → ${j.suggest_table}`;
+        } else {
+          // 后端已按实际库表解析过；此处兜底同大类近似（旧后端场景）
+          const prefix = j.suggest_table.split("-")[0].toLowerCase();
+          const alt = [...sel.options].find(o => o.value.toLowerCase().startsWith(prefix) && o.value !== prev)
+            || [...sel.options].find(o => o.value.toLowerCase().startsWith(prefix))
+            || (prev ? { value: prev } : null);
+          if (alt) {
+            sel.value = alt.value;
+            $("catHint").textContent = `立创分类 → ${j.suggest_table}（库中无此表，已近似选 ${alt.value}）`;
+            toast(`建议表「${j.suggest_table}」在库中不存在，已改选近似表「${alt.value}」，请确认目标表`, true);
+          } else {
+            $("catHint").textContent = `立创分类 → ${j.suggest_table}（库中无此表，请手动选择）`;
+            toast(`建议表「${j.suggest_table}」在库中不存在，请手动选择目标表`, true);
+          }
+        }
+      } else if ((j.suggest_candidates || []).length) {
+        // 理想表名无法唯一解析（如表已合并）：列出候选，由用户确认
+        $("aiBadge").classList.remove("hidden");
+        $("catHint").textContent = `立创分类候选：${j.suggest_candidates.join("、")}（请手动选择目标表）`;
+        toast(`该器件的推荐表无法唯一确定，候选：${j.suggest_candidates.join("、")} —— 请在「目标数据表」手动选择`, true);
       }
       await rebuildForm();
       for (const [k, v] of Object.entries(j.data)) {

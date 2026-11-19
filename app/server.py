@@ -386,6 +386,14 @@ class Handler(BaseHTTPRequestHandler):
                     ds_url = ""
             with st.lock:
                 sug_table = res.suggest_table
+                sug_cands = []
+                # 动态解析：理想表名 → 库中真实存在的表（表可能被用户合并/改名，不写死）
+                if sug_table and st.db:
+                    try:
+                        sug_table, sug_cands = lcsc.resolve_suggest_table(
+                            sug_table, st.db.get_tables())
+                    except Exception:
+                        pass
                 sug_fields = {}
                 sug_pn = ""
                 if res.ok and st.db:
@@ -397,6 +405,7 @@ class Handler(BaseHTTPRequestHandler):
                                                       res.pkg_family)
             return self._ok(fetched=res.ok, data=res.data, package=res.package,
                             pkg_family=res.pkg_family, suggest_table=sug_table,
+                            suggest_candidates=sug_cands,
                             suggest_fields=sug_fields, suggest_part_number=sug_pn,
                             datasheet_url=ds_url, model3d=res.model3d,
                             source=res.source, logs=res.logs)
