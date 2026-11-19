@@ -575,7 +575,8 @@ function mkFieldEl(c, typeVals) {
     input.type = "text";
     if (AUTOFILL_KEYS.includes(c)) input.className = "tint-auto";
     input.oninput = () => { STATE.pickedFile = ""; updatePreview(); };
-    input.title = "规格书相对路径（DataSheet/表名前缀/器件型号.pdf），可手动修改";
+    input.onfocus = () => showPickedPathDd(input);
+    input.title = "规格书相对路径（DataSheet/表名前缀/器件型号.pdf），可手动修改；已选替代文件时点击会提示可选路径";
     const btn = document.createElement("button");
     btn.className = "ghost tiny";
     btn.textContent = "替代文件";
@@ -875,6 +876,35 @@ function suggestDatasheetPath(table, mpn) {
   if (!mpn) return "";
   const folder = String(table || "").split("-")[0] || "DataSheet";
   return `DataSheet/${folder}/${mpn}.pdf`;
+}
+
+/* C2URL 聚焦时：已选替代文件 → 弹下拉展示「原文件名 → 库参考路径」，点击采用 */
+function showPickedPathDd(inp) {
+  if (!STATE.pickedFile) return;
+  const base = String(STATE.pickedFile).replace(/\\/g, "/").split("/").pop();
+  const target = suggestDatasheetPath($("tableSelect").value, base.replace(/\.pdf$/i, ""));
+  closeAllDd();
+  const dd = document.createElement("div");
+  dd.className = "dt-dd";
+  dd.style.cssText = "position:fixed;z-index:999;";
+  const r = inp.getBoundingClientRect();
+  dd.style.top = (r.bottom + 3) + "px";
+  dd.style.left = r.left + "px";
+  dd.style.width = Math.max(r.width, 340) + "px";
+  dd.innerHTML =
+    `<div class="dt-opt" style="display:flex;flex-direction:column;align-items:flex-start;gap:2px">` +
+    `<span>📄 ${esc(base)} <span style="color:var(--dim);font-weight:400">（替代文件）</span></span>` +
+    `<span style="font-size:10.5px;color:var(--ok)">→ ${esc(target)}</span></div>` +
+    `<div class="dt-none">点击上方条目采用该库参考路径</div>`;
+  dd.querySelector(".dt-opt").onmousedown = e => {
+    e.preventDefault();
+    e.stopPropagation();
+    inp.value = target;
+    closeAllDd();
+    updatePreview();
+  };
+  document.body.appendChild(dd);
+  dd.classList.remove("hidden");
 }
 
 /* 选择源规格书 PDF（pywebview 原生对话框）：只记住所选文件，不改动 C2URL。

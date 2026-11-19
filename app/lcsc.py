@@ -419,6 +419,82 @@ def fetch_datasheet_url(sn: str) -> str:
     return str(_fetch_wmsc_detail(sn).get("pdfUrl") or "").strip()
 
 
+def _res_type_autofill(res: LcscResult):
+    """电阻表 Type 字段按库惯例自动生成：{封装}/{系列}/{精度}%（如 0402/E96/1%）。
+    - 封装：package 去掉 R 前缀取数字（R0603 → 0603）
+    - 系列：精度 ≥±5% 恒为 E24；±1% 及更精时按阻值有效位数判
+      （数值有效位 ≥3 位 → E96，如 4.75kΩ；否则 E24，如 10kΩ/1MΩ）
+    库内真实样例：0402/E24/1%、0402/E96/1%、0603/E24/1%、0805/E96/1% …"""
+    tol = str(res.data.get("Tolerance") or "")
+    m = re.fullmatch(r"±\s*([\d.]+)\s*%", tol)
+    pkg_num = (res.package or "").upper().strip().lstrip("R")
+    if not m or not pkg_num.isdigit():
+        return
+    pct = m.group(1)
+    try:
+        pct_f = float(pct)
+    except ValueError:
+        return
+    if pct_f >= 5:
+        series = "E24"
+    else:
+        mm = re.match(r"([\d.]+)", str(res.data.get("Value") or ""))
+        digits = mm.group(1).replace(".", "").lstrip("0") if mm else ""
+        series = "E96" if len(digits) >= 3 else "E24"
+    res.data["Type"] = f"{pkg_num}/{series}/{pct}%"
+
+
+def _fmt_resistor_value(v) -> str:
+    """阻值转库惯例写法（字母作小数点、英文字母大写，库内 619 个既有值零小数点）：
+    5.4Ω→5R4，10Ω→10R，5.1kΩ→5K1，10kΩ→10K，1.02MΩ→1M02，1MΩ→1M。
+    K/M 值不带 R 后缀（与库内 10K/1M 惯例一致）。"""
+    s = str(v or "").strip().replace("µ", "u").replace("μ", "u")
+    m = re.fullmatch(r"([\d.]+)\s*(kΩ|KΩ|mΩ|MΩ|uΩ|Ω|k|K|m|M|R)?", s, re.IGNORECASE)
+    if not m:
+        return str(v)
+    num, unit = m.group(1), m.group(2) or "Ω"
+    if unit[0].lower() == "m" and unit not in ("M", "MΩ"):
+        mult = 1e-3            # mΩ（毫欧，小写 m）
+    elif unit[0].lower() == "k":
+        mult = 1e3
+    elif unit[0].upper() == "M":
+        mult = 1e6
+    else:
+        mult = 1.0
+    try:
+        ohms = float(num) * mult
+    except ValueError:
+        return str(v)
+    if ohms >= 1e6:
+        letter, base = "M", ohms / 1e6
+    elif ohms >= 1e3:
+        letter, base = "K", ohms / 1e3
+    else:
+        letter, base = "R", ohms
+    text = f"{base:.6f}".rstrip("0").rstrip(".")
+    if not text or text == "0":
+        text = "0"
+    # 有小数点 → 字母作小数点（5.1→5K1）；整数 → 字母作单位后缀（10→10K，欧姆值 10→10R）
+    if "." in text:
+        return text.replace(".", letter)
+    return text + letter
+
+
+def _fmt_capacitor_value(v, desc) -> str:
+    """电容值转「10uF/50V」风格：µ→u，电压从商品页描述抓取（无则不带电压）。"""
+    s = str(v or "").strip().replace("µ", "u").replace("μ", "u")
+    m = re.match(r"([\d.]+)\s*(uF|nF|pF|mF|F)\b", s, re.IGNORECASE)
+    if not m:
+        return str(v)
+    unit = m.group(2)
+    prefix = unit[0].lower() if unit.upper() != "F" else ""
+    out = f"{m.group(1)}{prefix}F"
+    vm = re.search(r"(\d+(?:\.\d+)?)\s*V\b", str(desc or ""))
+    if vm:
+        out += f"/{vm.group(1)}V"
+    return out
+
+
 def fetch(sn: str) -> LcscResult:
     sn = sn.strip().upper()
     res = LcscResult()
@@ -449,6 +525,24 @@ def fetch(sn: str) -> LcscResult:
                 if t:
                     res.suggest_table = t
                     break
+
+        # 精度兜底：所有描述增强完成后再抓一次——官方描述为空的 SN，
+        # 只有商品页描述（覆盖 Description 之后）才含 ±x%，原抓取时机会漏
+        if not res.data.get("Tolerance"):
+            m = re.search(r"±\s*[\d.]+\s*%", res.data.get("Description", ""))
+            if m:
+                res.data["Tolerance"] = m.group(0)
+
+        # Type 带出：电阻表按库惯例生成「封装/系列/精度」（如 0603/E96/1%）
+        if res.suggest_table == "Resistors":
+            _res_type_autofill(res)
+
+        # Value 规范化（在 Type 计算之后：Type 的有效位数判定用的是原始数值写法）
+        if res.suggest_table == "Resistors":
+            res.data["Value"] = _fmt_resistor_value(res.data.get("Value"))
+        elif str(res.suggest_table or "").startswith("Capacitors"):
+            res.data["Value"] = _fmt_capacitor_value(
+                res.data.get("Value"), res.data.get("Description"))
     except Exception as e:
         res.logs.append(f"✗ {e}")
         res.logs.append("全部通道失败或官方库无此编号，可手动填写（不影响入库）")
