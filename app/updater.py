@@ -45,13 +45,13 @@ def _cache_path() -> Path:
     return _base_dir() / _CACHE_FNAME
 
 
-def _load_cache() -> None:
+def _load_cache(app_version: str) -> None:
     global _INFO, _ETAG
     try:
         data = json.loads(_cache_path().read_text("utf-8"))
         _INFO = dict(data.get("info") or {"available": False})
         _ETAG = str(data.get("etag") or "")
-        _recompute_available(_INFO)
+        _recompute_available(_INFO, app_version)
     except (OSError, ValueError):
         pass
 

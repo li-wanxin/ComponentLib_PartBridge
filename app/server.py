@@ -582,7 +582,7 @@ class Handler(BaseHTTPRequestHandler):
 def build_server(host="127.0.0.1", port=0):
     srv = ThreadingHTTPServer((host, port), Handler)
     # 更新检查：磁盘缓存恢复 + 延迟 3s 后台首查（304/限流降级/静默失败，见 updater.py）
-    updater._load_cache()
+    updater._load_cache(APP_VERSION)
     updater.clean_stale()      # 清理上次升级残留的安装包（升级包在安装目录，装完即清）
     threading.Thread(target=updater._delayed_check, args=(APP_VERSION, STATE.log),
                      daemon=True, name="update-check").start()
