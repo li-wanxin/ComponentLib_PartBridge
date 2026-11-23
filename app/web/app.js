@@ -63,6 +63,17 @@ async function boot() {
   applyThemeColor(STATE.settings.dark);
   bindEvents();
   await reloadDb();
+  // 启动后静默检查更新：发现新版本时顶部亮出「⬆ 新版本」胶囊（点击进设置页）
+  setTimeout(async () => {
+    try {
+      const j = await api("/api/update_check", {});
+      if (j.update && j.update.available) {
+        $("updPillText").textContent = `新版本 v${j.update.latest}`;
+        $("updPill").classList.remove("hidden");
+        toast(`发现新版本 v${j.update.latest}，点击右上角「新版本」前往设置页更新`);
+      }
+    } catch (e) { /* 静默 */ }
+  }, 5000);
 }
 
 async function reloadDb() {
@@ -1373,8 +1384,15 @@ async function changeDbFromSidebar() {
 /* ================= 软件更新 ================= */
 function paintUpdate(j) {
   const line = $("updStatusLine"), detail = $("updDetail"), btn = $("updDownloadBtn");
-  const cur = (j.version || "?");
+  const cur = (j.version || STATE.version || "?");
   const u = j.update || {};
+  const pill = $("updPill");
+  if (u.available) {
+    $("updPillText").textContent = `新版本 v${u.latest}`;
+    pill.classList.remove("hidden");
+  } else {
+    pill.classList.add("hidden");
+  }
   if (u.error) {
     line.textContent = `当前版本 v${cur}　｜　检查失败`;
     detail.textContent = u.error;

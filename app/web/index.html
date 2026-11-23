@@ -15,6 +15,7 @@
     <div class="sub">Altium / Cadence 器件库 · 物料入库与浏览</div>
   </div>
   <div class="top-right">
+    <button class="pill hidden" id="updPill" onclick="switchView('settings')" title="发现新版本，点击前往设置页更新">⬆ <span id="updPillText"></span></button>
     <div class="pill" id="dbPill"><span class="dot"></span><span id="dbPillText">数据库 未连接</span></div>
     <button class="theme-toggle" id="themeBtn" title="切换亮/暗主题">🌙 深色</button>
   </div>
@@ -33,6 +34,11 @@
       <div class="dev-ico">＋</div>
       <div class="dev-main"><div class="dev-name">添加物料</div>
       <div class="dev-sub">立创 SN 查询 → 入库</div></div>
+    </div>
+    <div class="dev" data-nav="settings" onclick="switchView('settings')">
+      <div class="dev-ico">⚙</div>
+      <div class="dev-main"><div class="dev-name">设置</div>
+      <div class="dev-sub">库路径 · 软件更新</div></div>
     </div>
     <div class="dev disabled" title="后续开放">
       <div class="dev-ico">⇪</div>
