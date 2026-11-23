@@ -21,7 +21,7 @@ import libcheck
 import libgen
 import updater
 
-APP_VERSION = "0.0.7"
+APP_VERSION = "0.0.8"
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 if getattr(sys, "frozen", False):
