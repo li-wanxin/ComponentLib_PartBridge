@@ -35,11 +35,6 @@
       <div class="dev-main"><div class="dev-name">添加物料</div>
       <div class="dev-sub">立创 SN 查询 → 入库</div></div>
     </div>
-    <div class="dev" data-nav="settings" onclick="switchView('settings')">
-      <div class="dev-ico">⚙</div>
-      <div class="dev-main"><div class="dev-name">设置</div>
-      <div class="dev-sub">库路径 · 软件更新</div></div>
-    </div>
     <div class="dev disabled" title="后续开放">
       <div class="dev-ico">⇪</div>
       <div class="dev-main"><div class="dev-name">批量导入</div>
@@ -47,6 +42,11 @@
     </div>
 
     <div class="sidebar-bottom">
+      <div class="dev" data-nav="settings" onclick="switchView('settings')">
+        <div class="dev-ico">⚙</div>
+        <div class="dev-main"><div class="dev-name">设置</div>
+        <div class="dev-sub">库路径 · 软件更新</div></div>
+      </div>
       <div class="grp">数据库</div>
       <div class="db-card clickable" id="dbCard" title="点击选择新的 ComponentLib.mdb 库路径">
         <div class="kv-line"><span class="k">路径</span><span class="v" id="sideDbPath">—</span></div>
