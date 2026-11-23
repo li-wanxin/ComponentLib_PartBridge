@@ -2,7 +2,7 @@
 ; 用法：ISCC.exe packaging/PartBridge.iss
 
 #define MyAppName "PartBridge"
-#define MyAppVer "0.0.6"
+#define MyAppVer "0.0.7"
 #define MyAppPublisher "li-wanxin"
 #define MyAppURL "https://github.com/li-wanxin/ComponentLib_PartBridge"
 #define MyAppExeName "PartBridge.exe"
@@ -25,6 +25,7 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#MyAppExeName}
+SetupIconFile=..\app\app.ico
 
 [Languages]
 ; 系统未内置 ChineseSimplified.isl，使用默认英文向导（界面本身是中文的）
@@ -36,6 +37,13 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 [Dirs]
 ; 授予 Users 组写权限：settings.json / UserData 缓存等软件数据统一存放在安装目录下
 Name: "{app}"; Permissions: users-modify
+
+[InstallDelete]
+; 应用内升级下载到安装目录的升级包：新版本装好后自动清除（用户要求"安装后自动清除"）
+Type: files; Name: "{app}\PartBridge-Setup-*.exe"
+Type: files; Name: "{app}\PartBridge-Portable-*.exe"
+Type: files; Name: "{app}\PartBridge_更新下载.exe"
+Type: files; Name: "{app}\PartBridge_旧版本.exe"
 
 [Files]
 Source: "..\release\portable\PartBridge.exe"; DestDir: "{app}"; Flags: ignoreversion

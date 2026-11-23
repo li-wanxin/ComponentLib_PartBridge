@@ -11,7 +11,7 @@
 <header>
   <div class="logo">CL</div>
   <div class="brand">
-    <h1>ComponentLib 维护平台 <span class="app-ver">v0.0.6</span></h1>
+    <h1>ComponentLib 维护平台 <span class="app-ver">v0.0.7</span></h1>
     <div class="sub">Altium / Cadence 器件库 · 物料入库与浏览</div>
   </div>
   <div class="top-right">
@@ -184,6 +184,17 @@
             <label class="switch-label"><input type="checkbox" id="backupChk"> 写入前自动备份数据库（按天，存入库目录 backups\ 下）</label>
           </div>
           <button class="primary" id="saveSettingsBtn">保存并立即重新载入</button>
+        </div>
+      </div>
+      <div class="panel card settings-card">
+        <div class="card-hd"><span class="chip-num">⬆</span><b>软件更新</b></div>
+        <div class="card-bd">
+          <div class="hint" id="updStatusLine">当前版本 v?　｜　尚未检查更新</div>
+          <div class="sn-row" style="margin-top:8px">
+            <button class="ghost" id="updCheckBtn">检查更新</button>
+            <button class="primary" id="updDownloadBtn" disabled>下载并安装更新</button>
+          </div>
+          <div class="hint" id="updDetail" style="margin-top:6px"></div>
         </div>
       </div>
     </section>

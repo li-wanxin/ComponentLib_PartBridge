@@ -7,7 +7,7 @@ let STATE = {
   settings: {}, dbPath: "", libRoot: "", fieldInputs: {},
   detailRow: null, editing: false, editValues: {}, dlCache: {},
   lastDatasheet: "", pickedFile: "", lastSN: null, model3d: null, m3dPending: false,
-  sn: "", libgenPending: { sch: false, pcb: false },
+  sn: "", libgenPending: { sch: false, pcb: false }, updChecked: false,
 };
 
 /* ================= 工具 ================= */
@@ -70,6 +70,11 @@ async function reloadDb() {
     const j = await api("/api/bootstrap");
     STATE.tables = j.tables; STATE.dbPath = j.db_path; STATE.libRoot = j.lib_root;
     STATE.settings = j.settings;
+    STATE.version = j.version || "?";
+    const sl = $("updStatusLine");
+    if (sl.textContent.startsWith("当前版本 v?")) {
+      sl.textContent = `当前版本 v${STATE.version}　｜　尚未检查更新`;
+    }
     renderDbInfo(j);
     renderTableList();
     const first = j.tables.find(t => t.count > 0) || j.tables[0];
@@ -481,6 +486,7 @@ function switchView(name) {
   document.querySelectorAll(".dev[data-nav]").forEach(d =>
     d.classList.toggle("sel", d.dataset.nav === name));
   if (name === "add") rebuildForm();
+  if (name === "settings" && !STATE.updChecked) { STATE.updChecked = true; updCheck(false); }
   requestAnimationFrame(layoutAddScroll);
 }
 
@@ -1364,6 +1370,67 @@ async function changeDbFromSidebar() {
   }
 }
 
+/* ================= 软件更新 ================= */
+function paintUpdate(j) {
+  const line = $("updStatusLine"), detail = $("updDetail"), btn = $("updDownloadBtn");
+  const cur = (j.version || "?");
+  const u = j.update || {};
+  if (u.error) {
+    line.textContent = `当前版本 v${cur}　｜　检查失败`;
+    detail.textContent = u.error;
+    btn.disabled = true;
+    return;
+  }
+  if (u.available) {
+    line.textContent = `当前版本 v${cur}　｜　发现新版本 v${u.latest} ✅`;
+    detail.textContent = "升级包将下载到软件安装目录：安装版启动覆盖安装向导后本程序自动关闭；"
+      + "绿色版自动就位替换，重开即为新版。安装完成后残留安装包自动清除。";
+    btn.disabled = false;
+  } else {
+    line.textContent = `当前版本 v${cur}　｜　已是最新` + (u.latest ? `（线上 v${u.latest}）` : "");
+    detail.textContent = u.note || "";
+    btn.disabled = true;
+  }
+}
+
+async function updCheck(manual = true) {
+  const btn = $("updCheckBtn");
+  btn.disabled = true;
+  if (manual) $("updStatusLine").textContent = "正在检查更新…";
+  try {
+    const j = await api("/api/update_check", {});
+    paintUpdate(j);
+    if (manual && j.update && j.update.available) toast(`发现新版本 v${j.update.latest}！`);
+  } catch (e) {
+    $("updStatusLine").textContent = "检查更新失败：" + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function updDownload() {
+  const btn = $("updDownloadBtn");
+  btn.disabled = true;
+  btn.textContent = "下载中…";
+  try {
+    const j = await api("/api/update_download", {});
+    toast(j.message || "更新已处理");
+    $("updDetail").textContent = j.message || "";
+    if (j.mode === "setup") {
+      $("updStatusLine").textContent = "安装向导已启动，本程序即将自动关闭…";
+    } else if (j.mode === "portable") {
+      $("updStatusLine").textContent = "更新已就位，请完全关闭本程序后重新打开";
+    } else {
+      $("updStatusLine").textContent = "已打开发布页，请手动下载";
+    }
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "下载并安装更新";
+  }
+}
+
 /* ================= 设置 ================= */
 async function pickDbFile() {
   if (window.pywebview && window.pywebview.api && window.pywebview.api.pick_db_file) {
@@ -1415,6 +1482,8 @@ function bindEvents() {
   $("dbCard").onclick = changeDbFromSidebar;
   $("browseDbBtn").onclick = pickDbFile;
   $("saveSettingsBtn").onclick = saveSettings;
+  $("updCheckBtn").onclick = () => updCheck(true);
+  $("updDownloadBtn").onclick = updDownload;
   $("themeBtn").onclick = toggleTheme;
   $("newTableBtn").onclick = newTable;
   $("inputModalOk").onclick = submitInputModal;

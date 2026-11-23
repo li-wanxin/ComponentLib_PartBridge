@@ -19,6 +19,9 @@ import conventions as conv
 import lcsc
 import libcheck
 import libgen
+import updater
+
+APP_VERSION = "0.0.7"
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 if getattr(sys, "frozen", False):
@@ -208,6 +211,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._ok(loaded=loaded, tables=tables, total=total,
                             db_path=st.db.path if st.db else "",
                             lib_root=st.lib_root,
+                            version=APP_VERSION,
                             settings=st.settings)
         if p == "/api/table":
             if not st.ensure_db():
@@ -549,6 +553,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._ok(available=bool(available),
                             name=str(data.get("title") or "") if kind == "sch"
                             else str((data.get("packageDetail") or {}).get("title") or ""))
+        if p == "/api/update_check":
+            return self._ok(version=APP_VERSION, update=updater.check_once(APP_VERSION, st.log))
+        if p == "/api/update_download":
+            try:
+                r = updater.download_update(APP_VERSION, st.log)
+                return self._ok(**r)
+            except Exception as e:
+                return self._err(str(e))
         if p == "/api/settings":
             s = st.settings
             if "dark" in body:
@@ -569,4 +581,9 @@ class Handler(BaseHTTPRequestHandler):
 
 def build_server(host="127.0.0.1", port=0):
     srv = ThreadingHTTPServer((host, port), Handler)
+    # 更新检查：磁盘缓存恢复 + 延迟 3s 后台首查（304/限流降级/静默失败，见 updater.py）
+    updater._load_cache()
+    updater.clean_stale()      # 清理上次升级残留的安装包（升级包在安装目录，装完即清）
+    threading.Thread(target=updater._delayed_check, args=(APP_VERSION, STATE.log),
+                     daemon=True, name="update-check").start()
     return srv
