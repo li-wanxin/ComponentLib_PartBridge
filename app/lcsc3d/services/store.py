@@ -706,21 +706,30 @@ class StoreClient:
         if result.get('code') != 200 or not isinstance(public_key, str) or not re.fullmatch(r'04[0-9a-fA-F]{128}', public_key):
             raise StoreError('获取账号登录加密配置失败，请稍后重试。')
         # The official key exchange sends an empty POST, not a JSON object.
-        body, _ = self.session.request(PASSPORT + '/api/cas/secret/update', method='POST',
-            headers={'Content-Type': 'application/json;charset=UTF-8', 'Origin': PASSPORT,
-                     'Referer': PASSPORT + '/login?appId=LC_PUB'}, cancelled=cancelled)
-        try:
-            result = json.loads(body)
-            keys = result['data']
-            if (result.get('code') != 200 or not isinstance(keys, dict) or not keys.get('keyId')
-                    or not re.fullmatch(r'[0-9a-fA-F]{64}', keys.get('privateHexKey', ''))
-                    or not re.fullmatch(r'04[0-9a-fA-F]{128}', keys.get('publicHexKey', ''))):
-                raise ValueError()
-        except (ValueError, KeyError, TypeError):
-            raise StoreError('初始化登录加密通道失败，请稍后重试。') from None
-        self._login_public_key = public_key
-        self._auth_keys = {key: keys[key] for key in ('keyId', 'privateHexKey', 'publicHexKey')}
-        self._auth_expires = time.monotonic() + 1200
+        # 网络波动/风控瞬时拦截会返回非 JSON 内容 → 重试三次（PartBridge 加固）
+        last_exc = None
+        for _attempt in range(3):
+            body, _ = self.session.request(PASSPORT + '/api/cas/secret/update', method='POST',
+                headers={'Content-Type': 'application/json;charset=UTF-8', 'Origin': PASSPORT,
+                         'Referer': PASSPORT + '/login?appId=LC_PUB'}, cancelled=cancelled)
+            try:
+                result = json.loads(body)
+                keys = result['data']
+                if (result.get('code') != 200 or not isinstance(keys, dict) or not keys.get('keyId')
+                        or not re.fullmatch(r'[0-9a-fA-F]{64}', keys.get('privateHexKey', ''))
+                        or not re.fullmatch(r'04[0-9a-fA-F]{128}', keys.get('publicHexKey', ''))):
+                    raise ValueError()
+            except (ValueError, KeyError, TypeError) as exc:
+                last_exc = exc
+                log_event('WARN', 'login.key_exchange_retry', attempt=_attempt + 1,
+                          body_head=text(body, 120))
+                time.sleep(1.0)
+                continue
+            self._login_public_key = public_key
+            self._auth_keys = {key: keys[key] for key in ('keyId', 'privateHexKey', 'publicHexKey')}
+            self._auth_expires = time.monotonic() + 1200
+            return
+        raise StoreError('初始化登录加密通道失败，请稍后重试。') from last_exc
 
     def _encrypted_field(self, value):
         try:
