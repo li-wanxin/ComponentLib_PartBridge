@@ -648,12 +648,26 @@ class Handler(BaseHTTPRequestHandler):
                                 image="data:image/png;base64," + _b64.b64encode(cap['image']).decode())
             except Exception as e:
                 return self._err(f"获取验证码失败: {e}")
+        if p == "/api/lcsc_check_captcha":
+            ticket_code = str(body.get("ticket_code") or "")
+            verify_code = str(body.get("verify_code") or "").strip()
+            if not ticket_code or not verify_code:
+                return self._err("请输入图片验证码")
+            try:
+                ticket = _store_client().check_captcha('pass_word_login', ticket_code, verify_code)
+                return self._ok(captcha_ticket=ticket)
+            except Exception as e:
+                return self._err(str(e))
         if p == "/api/lcsc_login":
             username = (body.get("username") or "").strip()
             password = str(body.get("password") or "")
             ticket = str(body.get("captcha_ticket") or "")
             if not username or not password:
                 return self._err("请输入账号和密码")
+            if not ticket:
+                # 立创 CAS 密码登录当前强制图形验证码：无 ticket 直接走验证码流程
+                return self._ok(captcha_required=True,
+                                message="密码登录需要图形验证码：请输入图片中的字符后重新登录")
             import lcsc3d.services.store as _store
             try:
                 client = _store_client()

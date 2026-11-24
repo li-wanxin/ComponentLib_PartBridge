@@ -1445,6 +1445,8 @@ function lcscPaint(j) {
     line.textContent = "未登录（关键字搜索走无头渲染通道，较慢）";
     form.style.display = "flex";
     $("lcscLogoutBtn").style.display = "none";
+    // 密码登录强制图形验证码：表单可见即取码，验证码始终展示
+    if (!lcscTicket) lcscRefreshCaptcha();
   }
 }
 
@@ -1471,18 +1473,37 @@ async function lcscRefreshCaptcha() {
 
 async function lcscLogin() {
   const btn = $("lcscLoginBtn");
+  const code = $("lcscCaptchaCode").value.trim();
+  if (!code) {
+    $("lcscLoginMsg").textContent = "请先输入图片验证码";
+    return;
+  }
   btn.disabled = true;
+  $("lcscLoginMsg").textContent = "校验验证码…";
+  let ticket = "";
+  try {
+    // 两步走：验证码校验拿 captchaTicket → 密码登录（立创 CAS 密码登录强制验证码）
+    const c = await api("/api/lcsc_check_captcha",
+                        { ticket_code: lcscTicket, verify_code: code });
+    ticket = c.captcha_ticket || "";
+  } catch (e) {
+    $("lcscLoginMsg").textContent = e.message;
+    await lcscRefreshCaptcha();
+    $("lcscCaptchaCode").value = "";
+    btn.disabled = false;
+    return;
+  }
   $("lcscLoginMsg").textContent = "登录中…";
   try {
     const j = await api("/api/lcsc_login", {
       username: $("lcscUser").value.trim(),
       password: $("lcscPass").value,
-      captcha_ticket: lcscTicket,
-      verify_code: $("lcscCaptchaCode").value.trim(),
+      captcha_ticket: ticket,
     });
     if (j.captcha_required) {
-      $("lcscLoginMsg").textContent = j.message || "需要图形验证码";
+      $("lcscLoginMsg").textContent = (j.message || "需要图形验证码") + "（验证码已刷新，请重试）";
       await lcscRefreshCaptcha();
+      $("lcscCaptchaCode").value = "";
       return;
     }
     if (j.logged_in) {
@@ -1495,7 +1516,8 @@ async function lcscLogin() {
     }
   } catch (e) {
     $("lcscLoginMsg").textContent = e.message;
-    if ($("lcscCaptchaRow").style.display !== "none") await lcscRefreshCaptcha();
+    await lcscRefreshCaptcha();
+    $("lcscCaptchaCode").value = "";
   } finally {
     btn.disabled = false;
   }
@@ -1504,7 +1526,7 @@ async function lcscLogin() {
 async function lcscLogout() {
   try { await api("/api/lcsc_logout", {}); } catch (e) { /* 忽略 */ }
   lcscTicket = "";
-  $("lcscCaptchaRow").style.display = "none";
+  $("lcscCaptchaCode").value = "";
   lcscPaint({ logged_in: false });
   toast("已退出立创商城登录");
 }
