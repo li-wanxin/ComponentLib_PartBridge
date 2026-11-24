@@ -634,40 +634,65 @@ def search_keyword(keyword: str, limit: int = 20) -> list:
         return []
     edge = _find_edge()
     url = "https://so.szlcsc.com/global.html?k=" + urllib.parse.quote(kw)
-    tmpdir = os.path.join(os.environ.get("TEMP", "."), "partbridge_search_profile")
-    cmd = [edge, "--headless=new", "--disable-gpu", "--no-first-run",
-           f"--user-data-dir={tmpdir}", "--virtual-time-budget=20000",
-           "--timeout=40000", "--dump-dom", url]
-    try:
-        cp = subprocess.run(cmd, capture_output=True, timeout=90,
-                            encoding="utf-8", errors="replace")
-        html = cp.stdout or ""
-    except Exception as exc:
-        raise RuntimeError(f"搜索页渲染失败: {exc}") from exc
-    m = re.search(r'<script id="__NEXT_DATA__" type="application/json"[^>]*>(.*?)</script>',
-                  html, re.S)
-    if not m:
-        return []
-    try:
-        data = json.loads(m.group(1))
-    except ValueError:
-        return []
+    # 每次搜索用全新临时 profile：复用 profile 会被立创风控标记后强制跳登录页；
+    # 全新匿名会话可通过 JS 挑战正常出结果，用完即删
+    import random
+    tmpdir = os.path.join(os.environ.get("TEMP", "."),
+                          f"pbridge_srch_{random.randint(10 ** 8, 10 ** 9)}")
+    # 搜索页要先过 JS 反爬挑战再渲染真实结果，时机有波动：
+    # 三级重试递增虚拟时间预算；挑战页（_xvasu 标记）或登录页视为未渲染完成
+    html = ""
     items: dict = {}
+    try:
+        for budget in (20000, 35000, 50000):
+            cmd = [edge, "--headless=new", "--disable-gpu", "--no-first-run",
+                   f"--user-data-dir={tmpdir}", f"--virtual-time-budget={budget}",
+                   "--timeout=60000", "--dump-dom", url]
+            try:
+                cp = subprocess.run(cmd, capture_output=True, timeout=120,
+                                    encoding="utf-8", errors="replace")
+                html = cp.stdout or ""
+            except Exception as exc:
+                raise RuntimeError(f"搜索页渲染失败: {exc}") from exc
+            if "用户登录中心" in html[:12000]:
+                continue                     # 风控跳登录页 → 换更大预算的全新会话重试
+            m = re.search(r'<script id="__NEXT_DATA__" type="application/json"[^>]*>(.*?)</script>',
+                          html, re.S)
+            if not m:
+                continue                     # 挑战页或渲染未完成 → 提高预算重试
+            try:
+                data = json.loads(m.group(1))
+            except ValueError:
+                continue
 
-    def _walk(o, depth=0):
-        if depth > 30:
-            return
-        if isinstance(o, dict):
-            code = o.get("productCode")
-            if code and re.fullmatch(r"C\d{3,10}", str(code)):
-                items[str(code)] = o
-            for v in o.values():
-                _walk(v, depth + 1)
-        elif isinstance(o, list):
-            for v in o:
-                _walk(v, depth + 1)
+            def _walk(o, depth=0):
+                if depth > 30:
+                    return
+                if isinstance(o, dict):
+                    code = o.get("productCode")
+                    if code and re.fullmatch(r"C\d{3,10}", str(code)):
+                        items[str(code)] = o
+                    for v in o.values():
+                        _walk(v, depth + 1)
+                elif isinstance(o, list):
+                    for v in o:
+                        _walk(v, depth + 1)
 
-    _walk(data)
+            items.clear()
+            _walk(data)
+            if items:
+                break                        # 拿到候选即止
+            # NEXT_DATA 正常但无商品 → 可能真无结果，再试一轮确认
+    finally:
+        # 清理临时 profile（延迟删除，避免句柄未释放）
+        import threading
+        def _cleanup():
+            import shutil as _sh
+            _sh.rmtree(tmpdir, ignore_errors=True)
+        threading.Timer(3.0, _cleanup).start()
+    if not html or ("__NEXT_DATA__" not in html and "用户登录中心" not in html[:12000]
+                    and "_xvasu" in html[:8000]):
+        raise RuntimeError("搜索页加载失败（网络波动），请重试")
     out = []
     for code, o in items.items():
         out.append({
