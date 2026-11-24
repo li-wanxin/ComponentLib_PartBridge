@@ -593,6 +593,9 @@ function mkFieldEl(c, typeVals) {
     if (AUTOFILL_KEYS.includes(c)) input.className = "tint-auto";
     input.oninput = () => { STATE.pickedFile = ""; updatePreview(); };
     input.onfocus = () => showPickedPathDd(input);
+    // 阻止点击冒泡到 document 的「点击外部关闭下拉」监听，否则下拉刚开即被关闭
+    input.onmousedown = e => e.stopPropagation();
+    input.onclick = e => e.stopPropagation();
     input.title = "规格书相对路径（DataSheet/表名前缀/器件型号.pdf），可手动修改；已选替代文件时点击会提示可选路径";
     const btn = document.createElement("button");
     btn.className = "ghost tiny";
@@ -1413,9 +1416,9 @@ function showCandModal(cands, keyword) {
     `<div class="cand-row" data-i="${i}">` +
     `<span class="cand-sn">${esc(c.sn)}</span>` +
     `<span class="cand-model">${esc(c.model || "—")}</span>` +
-    `<span class="cand-meta">${esc(c.brand || "—")}　·　${esc(c.encap || "—")}</span>` +
-    `<span class="cand-desc">${esc(c.desc || "")}</span>` +
+    `<span class="cand-meta">${esc(c.brand || "—")} · ${esc(c.encap || "—")}</span>` +
     `<span class="cand-type">${esc(c.ptype || "")}</span>` +
+    `<span class="cand-desc">${esc(c.desc || "")}</span>` +
     `</div>`).join("");
   list.querySelectorAll(".cand-row").forEach(row => {
     row.onclick = () => {
