@@ -596,3 +596,87 @@ if __name__ == "__main__":
             print(f"  {k}: {str(v)[:70]}")
         for l in r.logs:
             print("  [log]", l)
+
+
+# ================= 关键字搜索（器件名称/型号 → 候选列表） =================
+# 立创商城搜索页有 JS 反爬挑战，普通 HTTP 拿不到数据；
+# 但页面内嵌 __NEXT_DATA__ 结构化商品数据（productCode/productModel/品牌/封装），
+# 用系统自带 Edge 无头渲染（真实 Chromium 自动过挑战）后解析即可 —— 稳定可靠。
+
+_EDGE_PATHS = (
+    r"C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+    r"C:/Program Files/Microsoft/Edge/Application/msedge.exe",
+    r"C:/Users/%USERNAME%/AppData/Local/Microsoft/Edge/Application/msedge.exe",
+)
+
+
+def _find_edge() -> str:
+    import os
+    import shutil
+    for p in _EDGE_PATHS:
+        if os.path.exists(p):
+            return p
+    found = shutil.which("msedge") or shutil.which("chrome")
+    if found:
+        return found
+    raise RuntimeError("未找到系统 Edge/Chrome 浏览器，无法进行关键字搜索")
+
+
+def search_keyword(keyword: str, limit: int = 20) -> list:
+    """关键字搜索立创商城在售器件，返回候选列表：
+    [{sn, model, brand, encap, desc, ptype}]；失败抛 RuntimeError。"""
+    import os
+    import subprocess
+    import urllib.parse
+
+    kw = (keyword or "").strip()
+    if not kw:
+        return []
+    edge = _find_edge()
+    url = "https://so.szlcsc.com/global.html?k=" + urllib.parse.quote(kw)
+    tmpdir = os.path.join(os.environ.get("TEMP", "."), "partbridge_search_profile")
+    cmd = [edge, "--headless=new", "--disable-gpu", "--no-first-run",
+           f"--user-data-dir={tmpdir}", "--virtual-time-budget=20000",
+           "--timeout=40000", "--dump-dom", url]
+    try:
+        cp = subprocess.run(cmd, capture_output=True, timeout=90,
+                            encoding="utf-8", errors="replace")
+        html = cp.stdout or ""
+    except Exception as exc:
+        raise RuntimeError(f"搜索页渲染失败: {exc}") from exc
+    m = re.search(r'<script id="__NEXT_DATA__" type="application/json"[^>]*>(.*?)</script>',
+                  html, re.S)
+    if not m:
+        return []
+    try:
+        data = json.loads(m.group(1))
+    except ValueError:
+        return []
+    items: dict = {}
+
+    def _walk(o, depth=0):
+        if depth > 30:
+            return
+        if isinstance(o, dict):
+            code = o.get("productCode")
+            if code and re.fullmatch(r"C\d{3,10}", str(code)):
+                items[str(code)] = o
+            for v in o.values():
+                _walk(v, depth + 1)
+        elif isinstance(o, list):
+            for v in o:
+                _walk(v, depth + 1)
+
+    _walk(data)
+    out = []
+    for code, o in items.items():
+        out.append({
+            "sn": code,
+            "model": str(o.get("productModel") or o.get("productName") or "").strip(),
+            "brand": str(o.get("productGradePlateName") or "").strip(),
+            "encap": str(o.get("encapsulationModel") or "").strip(),
+            "desc": str(o.get("productName") or "").strip()[:60],
+            "ptype": str(o.get("productType") or "").strip(),
+        })
+    out.sort(key=lambda x: x["sn"])
+    return out[:limit]

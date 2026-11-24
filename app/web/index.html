@@ -25,15 +25,15 @@
   <!-- ======== 侧栏 ======== -->
   <aside class="sidebar">
     <div class="grp">库操作</div>
-    <div class="dev sel" data-nav="browse" onclick="switchView('browse')">
-      <div class="dev-ico">▤</div>
-      <div class="dev-main"><div class="dev-name">器件库浏览</div>
-      <div class="dev-sub" id="navTotal">加载中…</div></div>
-    </div>
     <div class="dev" data-nav="add" onclick="switchView('add')">
       <div class="dev-ico">＋</div>
       <div class="dev-main"><div class="dev-name">添加物料</div>
       <div class="dev-sub">立创 SN 查询 → 入库</div></div>
+    </div>
+    <div class="dev sel" data-nav="browse" onclick="switchView('browse')">
+      <div class="dev-ico">▤</div>
+      <div class="dev-main"><div class="dev-name">器件库浏览</div>
+      <div class="dev-sub" id="navTotal">加载中…</div></div>
     </div>
     <div class="dev disabled" title="后续开放">
       <div class="dev-ico">⇪</div>
@@ -216,6 +216,17 @@
     <div class="modal-btns">
       <button class="ghost" onclick="closeInputModal()">取消</button>
       <button class="primary" id="inputModalOk">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- 关键字搜索候选确认模态 -->
+<div class="modal-mask hidden" id="candModalMask">
+  <div class="modal" style="width:760px">
+    <div class="modal-title" id="candModalTitle">找到多个匹配器件 —— 请选择</div>
+    <div id="candList" style="max-height:62vh;overflow:auto;display:flex;flex-direction:column;gap:6px;margin-top:8px"></div>
+    <div class="modal-btns" style="margin-top:10px">
+      <button class="ghost" onclick="closeCandModal()">取消</button>
     </div>
   </div>
 </div>

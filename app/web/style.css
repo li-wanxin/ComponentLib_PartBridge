@@ -460,3 +460,16 @@ html.light .modal { box-shadow: 0 18px 48px rgba(30, 45, 70, .3); }
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .toast.err { background: #2a1414; color: #ffb0b4; border-color: #5c1e24; }
+
+/* 关键字搜索候选弹窗 */
+.cand-row {
+  display: grid; grid-template-columns: 86px 1fr 200px; gap: 2px 10px;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+  cursor: pointer; font-size: 12px; background: var(--panel-2);
+}
+.cand-row:hover { border-color: var(--accent); background: var(--hover, var(--panel-2)); }
+.cand-sn { font-weight: 700; font-family: var(--mono); color: var(--accent); }
+.cand-model { font-family: var(--mono); grid-column: 2 / 4; }
+.cand-meta { color: var(--text-2); }
+.cand-desc { color: var(--dim); font-size: 11px; grid-column: 1 / 3; }
+.cand-type { font-size: 10.5px; color: var(--dim); grid-column: 3; text-align: right; }

@@ -895,11 +895,21 @@ function suggestDatasheetPath(table, mpn) {
   return `DataSheet/${folder}/${mpn}.pdf`;
 }
 
-/* C2URL 聚焦时：已选替代文件 → 弹下拉展示「原文件名 → 库参考路径」，点击采用 */
+/* C2URL 聚焦时：已选替代文件 → 下拉提供「同目录 + 原始替代文件名」的路径选项；
+   输入框默认已是器件型号文件名，选用原始名后写入即按所选路径存储 */
 function showPickedPathDd(inp) {
   if (!STATE.pickedFile) return;
   const base = String(STATE.pickedFile).replace(/\\/g, "/").split("/").pop();
-  const target = suggestDatasheetPath($("tableSelect").value, base.replace(/\.pdf$/i, ""));
+  const cur = inp.value.trim();
+  // 目录：优先取输入框当前路径的目录；否则按表前缀默认
+  let dir = "DataSheet";
+  if (/^DataSheet\/[^/]+\/.+/.test(cur)) {
+    dir = cur.split("/").slice(0, -1).join("/");
+  } else {
+    dir = "DataSheet/" + (String($("tableSelect").value || "").split("-")[0] || "DataSheet");
+  }
+  const target = `${dir}/${base}`;
+  const mpn = String((STATE.lastSN && STATE.lastSN.data) ? STATE.lastSN.data["Component Type"] || "" : "").trim();
   closeAllDd();
   const dd = document.createElement("div");
   dd.className = "dt-dd";
@@ -907,12 +917,12 @@ function showPickedPathDd(inp) {
   const r = inp.getBoundingClientRect();
   dd.style.top = (r.bottom + 3) + "px";
   dd.style.left = r.left + "px";
-  dd.style.width = Math.max(r.width, 340) + "px";
-  dd.innerHTML =
-    `<div class="dt-opt" style="display:flex;flex-direction:column;align-items:flex-start;gap:2px">` +
-    `<span>📄 ${esc(base)} <span style="color:var(--dim);font-weight:400">（替代文件）</span></span>` +
+  dd.style.width = Math.max(r.width, 380) + "px";
+  let html = `<div class="dt-opt" style="display:flex;flex-direction:column;align-items:flex-start;gap:2px">` +
+    `<span>📄 ${esc(base)} <span style="color:var(--dim);font-weight:400">（原始替代文件名）</span></span>` +
     `<span style="font-size:10.5px;color:var(--ok)">→ ${esc(target)}</span></div>` +
-    `<div class="dt-none">点击上方条目采用该库参考路径</div>`;
+    `<div class="dt-none">当前默认：器件型号命名；点击上方条目切换为原始文件名</div>`;
+  dd.innerHTML = html;
   dd.querySelector(".dt-opt").onmousedown = e => {
     e.preventDefault();
     e.stopPropagation();
@@ -933,7 +943,15 @@ async function pickDatasheetFile(input, btn) {
       STATE.pickedFile = r.path;
       const base = String(r.path).replace(/\\/g, "/").split("/").pop();
       btn.textContent = base.length > 14 ? "✓ " + base.slice(0, 13) + "…" : "✓ " + base;
-      btn.title = "已选替代文件：" + r.path + "（确认写入后复制更名为 C2URL 相对路径）";
+      btn.title = "已选替代文件：" + r.path + "（默认按器件型号存入库参考路径；点击文本框可切换为原始文件名）";
+      // 默认文件名 = 器件型号（MPN）；点击文本框时下拉提供「原始替代文件名」的同路径选项
+      const mpn = String((STATE.lastSN && STATE.lastSN.data) ? STATE.lastSN.data["Component Type"] || "" : "").trim();
+      if (mpn) {
+        input.value = suggestDatasheetPath($("tableSelect").value, mpn);
+      } else {
+        const folder = String($("tableSelect").value || "").split("-")[0] || "DataSheet";
+        input.value = `DataSheet/${folder}/${base}`;
+      }
       updatePreview();
     }
   } else {
@@ -1175,6 +1193,11 @@ async function fetchSN() {
   try {
     const j = await api("/api/sn", { sn });
     btn.disabled = false;
+    if (j.candidates && j.candidates.length) {   // 关键字搜索多候选 → 弹框让用户确认
+      showCandModal(j.candidates, j.keyword || sn);
+      $("snStatus").textContent = `「${j.keyword || sn}」匹配到 ${j.candidates.length} 个器件，请确认`;
+      return;
+    }
     if (j.fetched) {
       $("snStatus").className = "sn-status ok";
       $("snStatus").textContent = `✓ 已带出 ${Object.keys(j.data).length} 个字段（来源：${j.source}）` +
@@ -1380,6 +1403,31 @@ async function changeDbFromSidebar() {
     toast(e.message, true);
   }
 }
+
+/* ================= 软件更新 ================= */
+function showCandModal(cands, keyword) {
+  const list = $("candList");
+  $("candModalTitle").textContent =
+    `「${keyword}」匹配到 ${cands.length} 个器件 —— 请确认后查询`;
+  list.innerHTML = cands.map((c, i) =>
+    `<div class="cand-row" data-i="${i}">` +
+    `<span class="cand-sn">${esc(c.sn)}</span>` +
+    `<span class="cand-model">${esc(c.model || "—")}</span>` +
+    `<span class="cand-meta">${esc(c.brand || "—")}　·　${esc(c.encap || "—")}</span>` +
+    `<span class="cand-desc">${esc(c.desc || "")}</span>` +
+    `<span class="cand-type">${esc(c.ptype || "")}</span>` +
+    `</div>`).join("");
+  list.querySelectorAll(".cand-row").forEach(row => {
+    row.onclick = () => {
+      const c = cands[Number(row.dataset.i)];
+      closeCandModal();
+      $("snInput").value = c.sn;
+      fetchSN();
+    };
+  });
+  $("candModalMask").classList.remove("hidden");
+}
+function closeCandModal() { $("candModalMask").classList.add("hidden"); }
 
 /* ================= 软件更新 ================= */
 function paintUpdate(j) {

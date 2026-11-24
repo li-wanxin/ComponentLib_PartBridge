@@ -380,7 +380,21 @@ class Handler(BaseHTTPRequestHandler):
     def _api_post(self, p, body):
         st = STATE
         if p == "/api/sn":
-            sn = (body.get("sn") or "").strip().upper()
+            raw_input = (body.get("sn") or "").strip()
+            sn = raw_input.upper()
+            # 关键字分支：非 SN 格式（器件名称/型号）→ 搜索候选，不唯一时交前端确认
+            if not re.fullmatch(r"C\d{3,10}", sn):
+                kw = raw_input
+                try:
+                    cands = lcsc.search_keyword(kw)
+                except Exception as e:
+                    return self._err(f"搜索失败: {e}")
+                if not cands:
+                    return self._err(f"未搜索到「{kw}」相关器件（可尝试完整型号）")
+                if len(cands) == 1:
+                    sn = cands[0]["sn"]       # 唯一命中 → 直接按 SN 查询
+                else:
+                    return self._ok(keyword=kw, candidates=cands)
             res = lcsc.fetch(sn)
             ds_url = ""
             if res.ok:
