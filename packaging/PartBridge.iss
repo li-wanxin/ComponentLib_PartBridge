@@ -46,7 +46,9 @@ Type: files; Name: "{app}\PartBridge_更新下载.exe"
 Type: files; Name: "{app}\PartBridge_旧版本.exe"
 
 [Files]
-Source: "..\release\portable\PartBridge.exe"; DestDir: "{app}"; Flags: ignoreversion
+; 安装版采用 onedir 目录式（运行时直接从安装目录加载 DLL，不再解压到 %TEMP%，
+; 根治杀软首扫竞态导致的 "Failed to load Python DLL" 偶发错误 —— Lab Console 同款修复）
+Source: "..\release\dist\PartBridge\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
