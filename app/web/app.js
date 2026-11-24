@@ -497,7 +497,7 @@ function switchView(name) {
   document.querySelectorAll(".dev[data-nav]").forEach(d =>
     d.classList.toggle("sel", d.dataset.nav === name));
   if (name === "add") rebuildForm();
-  if (name === "settings" && !STATE.updChecked) { STATE.updChecked = true; updCheck(false); }
+  if (name === "settings" && !STATE.updChecked) { STATE.updChecked = true; updCheck(false); lcscStatusCheck(); }
   requestAnimationFrame(layoutAddScroll);
 }
 
@@ -1432,6 +1432,83 @@ function showCandModal(cands, keyword) {
 }
 function closeCandModal() { $("candModalMask").classList.add("hidden"); }
 
+/* ================= 立创商城账号 ================= */
+let lcscTicket = "";
+
+function lcscPaint(j) {
+  const line = $("lcscStatusLine"), form = $("lcscLoginForm");
+  if (j.logged_in) {
+    line.textContent = `已登录 · ${j.account}`;
+    form.style.display = "none";
+    $("lcscLogoutBtn").style.display = "inline-block";
+  } else {
+    line.textContent = "未登录（关键字搜索走无头渲染通道，较慢）";
+    form.style.display = "flex";
+    $("lcscLogoutBtn").style.display = "none";
+  }
+}
+
+async function lcscStatusCheck() {
+  try {
+    lcscPaint(await api("/api/lcsc_status", {}));
+  } catch (e) {
+    $("lcscStatusLine").textContent = "登录状态检查失败：" + e.message;
+  }
+}
+
+async function lcscRefreshCaptcha() {
+  try {
+    const j = await api("/api/lcsc_captcha", {});
+    if (j.image) {
+      $("lcscCaptchaImg").src = j.image;
+      lcscTicket = j.ticket_code || "";
+      $("lcscCaptchaRow").style.display = "flex";
+    }
+  } catch (e) {
+    $("lcscLoginMsg").textContent = e.message;
+  }
+}
+
+async function lcscLogin() {
+  const btn = $("lcscLoginBtn");
+  btn.disabled = true;
+  $("lcscLoginMsg").textContent = "登录中…";
+  try {
+    const j = await api("/api/lcsc_login", {
+      username: $("lcscUser").value.trim(),
+      password: $("lcscPass").value,
+      captcha_ticket: lcscTicket,
+      verify_code: $("lcscCaptchaCode").value.trim(),
+    });
+    if (j.captcha_required) {
+      $("lcscLoginMsg").textContent = j.message || "需要图形验证码";
+      await lcscRefreshCaptcha();
+      return;
+    }
+    if (j.logged_in) {
+      $("lcscLoginMsg").textContent = "";
+      $("lcscPass").value = "";
+      $("lcscCaptchaCode").value = "";
+      lcscTicket = "";
+      lcscPaint(j);
+      toast("立创商城登录成功：" + j.account);
+    }
+  } catch (e) {
+    $("lcscLoginMsg").textContent = e.message;
+    if ($("lcscCaptchaRow").style.display !== "none") await lcscRefreshCaptcha();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function lcscLogout() {
+  try { await api("/api/lcsc_logout", {}); } catch (e) { /* 忽略 */ }
+  lcscTicket = "";
+  $("lcscCaptchaRow").style.display = "none";
+  lcscPaint({ logged_in: false });
+  toast("已退出立创商城登录");
+}
+
 /* ================= 软件更新 ================= */
 function paintUpdate(j) {
   const line = $("updStatusLine"), detail = $("updDetail"), btn = $("updDownloadBtn");
@@ -1553,6 +1630,12 @@ function bindEvents() {
   $("saveSettingsBtn").onclick = saveSettings;
   $("updCheckBtn").onclick = () => updCheck(true);
   $("updDownloadBtn").onclick = updDownload;
+  $("lcscLoginBtn").onclick = lcscLogin;
+  $("lcscLogoutBtn").onclick = lcscLogout;
+  $("lcscCaptchaRefresh").onclick = lcscRefreshCaptcha;
+  $("lcscCaptchaImg").onclick = lcscRefreshCaptcha;
+  $("lcscPass").onkeydown = e => { if (e.key === "Enter") lcscLogin(); };
+  $("lcscCaptchaCode").onkeydown = e => { if (e.key === "Enter") lcscLogin(); };
   $("themeBtn").onclick = toggleTheme;
   $("newTableBtn").onclick = newTable;
   $("inputModalOk").onclick = submitInputModal;

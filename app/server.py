@@ -23,6 +23,52 @@ import updater
 
 APP_VERSION = "0.0.8"
 
+# ---- 立创商城登录态（StoreClient：登录后搜索/详情走会话 API，快且稳） ----
+_STORE_LOCK = threading.Lock()
+_STORE_CLIENT = None
+_STORE_VAULT = None
+_STORE_STATUS = {"logged_in": False, "account": ""}
+
+
+def _store_paths():
+    base = os.path.dirname(SETTINGS_PATH)
+    return os.path.join(base, "lcsc_store_session.bin")
+
+
+def _store_client():
+    global _STORE_CLIENT, _STORE_VAULT
+    import lcsc3d.services.store as _store
+    import lcsc3d.services.store_session as _store_session
+    with _STORE_LOCK:
+        if _STORE_CLIENT is None:
+            _STORE_CLIENT = _store.StoreClient()
+            _STORE_VAULT = _store_session.SessionVault(path=_store_paths())
+            if _STORE_VAULT.exists():
+                try:
+                    _STORE_VAULT.load_into(_STORE_CLIENT)
+                    acct = _STORE_CLIENT.restore_account()
+                    _STORE_STATUS.update(logged_in=True, account=acct["name"])
+                except Exception:
+                    _STORE_STATUS.update(logged_in=False, account="")
+    return _STORE_CLIENT
+
+
+def _store_logout():
+    global _STORE_CLIENT, _STORE_STATUS
+    with _STORE_LOCK:
+        if _STORE_CLIENT is not None:
+            try:
+                _STORE_CLIENT.clear()
+            except Exception:
+                pass
+        if _STORE_VAULT is not None:
+            try:
+                _STORE_VAULT.delete()
+            except Exception:
+                pass
+        _STORE_CLIENT = None
+        _STORE_STATUS = {"logged_in": False, "account": ""}
+
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 if getattr(sys, "frozen", False):
     # PyInstaller 冻结模式：静态资源在解包目录（_MEIPASS），
@@ -385,10 +431,31 @@ class Handler(BaseHTTPRequestHandler):
             # 关键字分支：非 SN 格式（器件名称/型号）→ 搜索候选，不唯一时交前端确认
             if not re.fullmatch(r"C\d{3,10}", sn):
                 kw = raw_input
+                cands = None
+                cand_err = ""
+                # 首选：登录态商城接口（~1s，字段全）；失败自动降级无头渲染
                 try:
-                    cands = lcsc.search_keyword(kw)
+                    client = _store_client()
+                    with _STORE_LOCK:
+                        logged = _STORE_STATUS.get("logged_in")
+                    if logged:
+                        res = client.search_results_page(kw, 1)
+                        cands = [{"sn": p["part"], "model": p["title"],
+                                  "brand": p.get("manufacturer", ""),
+                                  "encap": p.get("package", ""),
+                                  "desc": (p.get("description") or p["title"])[:60],
+                                  "ptype": p.get("category", ""),
+                                  "stock": p.get("stock", "")}
+                                 for p in res.get("items", []) if p.get("part")]
                 except Exception as e:
-                    return self._err(f"搜索失败: {e}")
+                    cands = None
+                    cand_err = str(e)
+                if cands is None:
+                    try:
+                        cands = lcsc.search_keyword(kw)
+                    except Exception as e:
+                        msg = cand_err or str(e)
+                        return self._err(f"搜索失败: {msg or e}")
                 if not cands:
                     return self._err(f"未搜索到「{kw}」相关器件（可尝试完整型号）")
                 if len(cands) == 1:
@@ -567,6 +634,50 @@ class Handler(BaseHTTPRequestHandler):
             return self._ok(available=bool(available),
                             name=str(data.get("title") or "") if kind == "sch"
                             else str((data.get("packageDetail") or {}).get("title") or ""))
+        if p == "/api/lcsc_status":
+            try:
+                _store_client()
+            except Exception:
+                pass
+            return self._ok(**_STORE_STATUS)
+        if p == "/api/lcsc_captcha":
+            try:
+                cap = _store_client().captcha_image('pass_word_login')
+                import base64 as _b64
+                return self._ok(scene=cap['scene'], ticket_code=cap['ticket_code'],
+                                image="data:image/png;base64," + _b64.b64encode(cap['image']).decode())
+            except Exception as e:
+                return self._err(f"获取验证码失败: {e}")
+        if p == "/api/lcsc_login":
+            username = (body.get("username") or "").strip()
+            password = str(body.get("password") or "")
+            ticket = str(body.get("captcha_ticket") or "")
+            if not username or not password:
+                return self._err("请输入账号和密码")
+            import lcsc3d.services.store as _store
+            try:
+                client = _store_client()
+                with _STORE_LOCK:
+                    client.login_password(username, password, captcha_ticket=ticket)
+                    acct = client.account_info()
+                _STORE_STATUS.update(logged_in=True, account=acct["name"])
+                if _STORE_VAULT is not None:
+                    try:
+                        with _STORE_LOCK:
+                            _STORE_VAULT.save(client, None)
+                    except Exception:
+                        pass
+                return self._ok(logged_in=True, account=acct["name"])
+            except _store.CaptchaRequired as e:
+                return self._ok(captcha_required=True, scene=e.scene,
+                                message="需要图形验证码，请输入图片中的字符")
+            except _store.SessionExpired as e:
+                return self._err(str(e))
+            except Exception as e:
+                return self._err(str(e))
+        if p == "/api/lcsc_logout":
+            _store_logout()
+            return self._ok(logged_in=False)
         if p == "/api/update_check":
             return self._ok(version=APP_VERSION, update=updater.check_once(APP_VERSION, st.log))
         if p == "/api/update_download":

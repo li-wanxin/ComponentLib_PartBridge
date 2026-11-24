@@ -193,6 +193,31 @@
         </div>
       </div>
       <div class="panel card settings-card">
+        <div class="card-hd"><span class="chip-num">🔑</span><b>立创商城账号</b></div>
+        <div class="card-bd">
+          <div class="hint" id="lcscStatusLine">检查登录状态…</div>
+          <div id="lcscLoginForm" style="display:flex;flex-direction:column;gap:6px;margin-top:8px">
+            <div class="sn-row">
+              <input type="text" id="lcscUser" placeholder="手机号 / 客户编号 / 邮箱" autocomplete="off">
+            </div>
+            <div class="sn-row">
+              <input type="password" id="lcscPass" placeholder="密码" autocomplete="new-password">
+            </div>
+            <div class="sn-row" id="lcscCaptchaRow" style="display:none">
+              <input type="text" id="lcscCaptchaCode" placeholder="图片验证码" maxlength="8">
+              <img id="lcscCaptchaImg" alt="验证码" style="height:34px;border-radius:6px;cursor:pointer" title="点击刷新">
+              <button class="ghost tiny" id="lcscCaptchaRefresh">刷新</button>
+            </div>
+            <div class="hint" id="lcscLoginMsg"></div>
+            <div class="sn-row">
+              <button class="primary" id="lcscLoginBtn">登录</button>
+              <button class="ghost" id="lcscLogoutBtn" style="display:none">退出登录</button>
+            </div>
+            <div class="hint">登录后关键字搜索走立创商城会话接口：秒级返回、带库存字段、更稳定。会话凭据经 Windows DPAPI 加密保存在本机，不上传。</div>
+          </div>
+        </div>
+      </div>
+      <div class="panel card settings-card">
         <div class="card-hd"><span class="chip-num">⬆</span><b>软件更新</b></div>
         <div class="card-bd">
           <div class="hint" id="updStatusLine">当前版本 v?　｜　尚未检查更新</div>
