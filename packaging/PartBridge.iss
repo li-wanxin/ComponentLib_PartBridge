@@ -2,7 +2,7 @@
 ; 用法：ISCC.exe packaging/PartBridge.iss
 
 #define MyAppName "PartBridge"
-#define MyAppVer "0.0.8"
+#define MyAppVer "0.0.9"
 #define MyAppPublisher "li-wanxin"
 #define MyAppURL "https://github.com/li-wanxin/ComponentLib_PartBridge"
 #define MyAppExeName "PartBridge.exe"
