@@ -43,14 +43,35 @@ def _store_client():
         if _STORE_CLIENT is None:
             _STORE_CLIENT = _store.StoreClient()
             _STORE_VAULT = _store_session.SessionVault(path=_store_paths())
-            if _STORE_VAULT.exists():
-                try:
-                    _STORE_VAULT.load_into(_STORE_CLIENT)
-                    acct = _STORE_CLIENT.restore_account()
-                    _STORE_STATUS.update(logged_in=True, account=acct["name"])
-                except Exception:
-                    _STORE_STATUS.update(logged_in=False, account="")
     return _STORE_CLIENT
+
+
+_RESTORE_LAST = 0.0
+
+
+def _store_restore_if_needed():
+    """启动/查状态时尝试用本地加密会话恢复登录（60s 冷却防抖，失败不影响使用）。"""
+    global _RESTORE_LAST
+    client = _store_client()
+    with _STORE_LOCK:
+        if _STORE_STATUS.get("logged_in"):
+            return
+        vault = _STORE_VAULT
+    if vault is None or not vault.exists():
+        return
+    now = time.time()
+    if now - _RESTORE_LAST < 60:
+        return
+    _RESTORE_LAST = now
+    import lcsc3d.services.store as _store
+    try:
+        with _STORE_LOCK:
+            vault.load_into(client)
+            acct = client.restore_account()
+        _STORE_STATUS.update(logged_in=True, account=acct["name"])
+        STATE.log("ok", f"立创商城登录态已从本机恢复：{acct['name']}")
+    except Exception:
+        pass
 
 
 def _store_logout():
@@ -636,7 +657,7 @@ class Handler(BaseHTTPRequestHandler):
                             else str((data.get("packageDetail") or {}).get("title") or ""))
         if p == "/api/lcsc_status":
             try:
-                _store_client()
+                _store_restore_if_needed()
             except Exception:
                 pass
             return self._ok(**_STORE_STATUS)
@@ -677,10 +698,15 @@ class Handler(BaseHTTPRequestHandler):
                 _STORE_STATUS.update(logged_in=True, account=acct["name"])
                 if _STORE_VAULT is not None:
                     try:
+                        # ticket 必须传 vault 当前 generation（None 会被防误写机制跳过保存）
                         with _STORE_LOCK:
-                            _STORE_VAULT.save(client, None)
-                    except Exception:
-                        pass
+                            saved = _STORE_VAULT.save(client, _STORE_VAULT.generation)
+                        if saved:
+                            STATE.log("ok", "立创商城登录状态已保存到本机（DPAPI 加密）")
+                        else:
+                            STATE.log("warn", "登录会话保存被跳过（vault generation 不匹配）")
+                    except Exception as e:
+                        STATE.log("warn", f"登录会话保存失败: {e}")
                 return self._ok(logged_in=True, account=acct["name"])
             except _store.CaptchaRequired as e:
                 return self._ok(captcha_required=True, scene=e.scene,
@@ -725,4 +751,12 @@ def build_server(host="127.0.0.1", port=0):
     updater.clean_stale()      # 清理上次升级残留的安装包（升级包在安装目录，装完即清）
     threading.Thread(target=updater._delayed_check, args=(APP_VERSION, STATE.log),
                      daemon=True, name="update-check").start()
+    # 立创商城登录态：启动 2s 后从本机加密会话自动恢复（失败静默，不影响使用）
+    def _restore_store():
+        time.sleep(2.0)
+        try:
+            _store_restore_if_needed()
+        except Exception:
+            pass
+    threading.Thread(target=_restore_store, daemon=True, name="store-restore").start()
     return srv
