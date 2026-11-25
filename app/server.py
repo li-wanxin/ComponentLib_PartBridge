@@ -21,7 +21,7 @@ import libcheck
 import libgen
 import updater
 
-APP_VERSION = "0.0.9"
+APP_VERSION = "1.0.0"
 
 # ---- 立创商城登录态（StoreClient：登录后搜索/详情走会话 API，快且稳） ----
 _STORE_LOCK = threading.Lock()

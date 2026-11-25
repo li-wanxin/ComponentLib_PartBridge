@@ -16,3 +16,6 @@ app/web/appv2.js
 app/web/appv2.css
 *.spec.bak
 UserData/
+
+# 立创商城登录会话（DPAPI 加密，仅本机有效，不入库）
+lcsc_store_session.bin
